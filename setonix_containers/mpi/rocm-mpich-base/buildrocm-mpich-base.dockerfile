@@ -10,15 +10,16 @@ ARG MPICH_VERSION="3.4.3"
 # lustre version
 ARG LUSTRE_VERSION="2.15.0-RC4"
 # mpi4py version
-# CMEYER: 3.1.4 fails to install in ubuntu24.04, minimal upgrade to 3.1.5 does sinstall
-ARG MPI4PY_VERSION="3.1.5"
+# 3.1.x wheels/source builds break on Ubuntu 24.04 / Python 3.12 with current setuptools
+# (TypeError: new_compiler() got an unexpected keyword argument 'dry_run'); 4.x is compatible.
+ARG MPI4PY_VERSION="4.1.1"
 
 
 #define some metadata 
 LABEL org.opencontainers.image.created="2025-06"
 LABEL org.opencontainers.image.authors="Cristian Di Pietratonio <cristian.dipietrantonio@pawsey.org.au>, Pascal Elahi <pascal.elahi@pawsey.org.au>, Craig Meyer <cmeyer@pawsey.org.au>"
-LABEL org.opencontainers.image.documentation="https://github.com/PawseySC/pawsey-containers/"
-LABEL org.opencontainers.image.source="https://github.com/PawseySC/pawsey-containers/mpi/mpich-base/buildmpich.dockerfile"
+LABEL org.opencontainers.image.documentation="https://quay.io/pawsey"
+LABEL org.opencontainers.image.source="GPU_biology vendored recipe: setonix_containers/mpi/rocm-mpich-base/"
 LABEL org.opencontainers.image.vendor="Pawsey Supercomputing Research Centre"
 LABEL org.opencontainers.image.licenses="GNU GPL3.0"
 LABEL org.opencontainers.image.title="Setonix compatible MPICH + ROCM base"
@@ -139,6 +140,12 @@ RUN echo "Building lustre" \
     && cd / \
     && rm -rf /tmp/lustre-build \
     && echo "Finished installing lustre"
+RUN apt-get update && apt-get install -y \
+    python3 \
+    pkg-config \
+    libhwloc-dev \
+    libnuma-dev \
+    libpciaccess-dev
 
 # Build MPICH
 ARG MPICH_CONFIGURE_OPTIONS="--without-mpe --enable-fortran=all --enable-shared --enable-sharedlibs=gcc --enable-debuginfo --enable-yield=sched_yield \
@@ -152,7 +159,9 @@ ARG MPICH_CONFIGURE_OPTIONS="--without-mpe --enable-fortran=all --enable-shared 
 --enable-thread-cs=global \
 CC=gcc-12 CXX=g++-12 FC=gfortran-12 FFLAGS=-fallow-argument-mismatch"
 ARG MPICH_MAKE_OPTIONS=-j16
-COPY mpich_patches.tgz /tmp/
+# Patches live in lustrempich-base; build context must be setonix/mpi (see README).
+COPY lustrempich-base/csel.patch lustrempich-base/ch4r_init.patch /tmp/
+RUN tar czf /tmp/mpich_patches.tgz -C /tmp csel.patch ch4r_init.patch
 RUN echo "Building MPICH ... " \
     && mkdir -p /tmp/mpich-build \
     && cd /tmp/mpich-build \
@@ -237,7 +246,7 @@ RUN echo "Build aws-ofi-rccl" \
     # this is only valid when was grabbing a fork for a fix. 
     # && if [ "${rocm_major}" = "6" ]; then git checkout rocm60_memorytype_fix; fi \
     && ./autogen.sh \
-    && ./configure ${RCCL_CONFIGURE_OPTIONS}} \
+    && ./configure ${RCCL_CONFIGURE_OPTIONS} \
     && make -j 16 \
     && make install \
     && cd /tmp \
@@ -298,4 +307,7 @@ RUN echo "export NCCL_SOCKET_IFNAME=hsn"  >> /.singularity.d/env/91-environment.
 
 # and copy the recipe into the docker recipes directory
 RUN mkdir -p /opt/docker-recipes/
-COPY buildrocm-mpich-base.dockerfile /opt/docker-recipes/
+COPY rocm-mpich-base/buildrocm-mpich-base.dockerfile /opt/docker-recipes/
+ENV MPICH_ROOT=/opt/mpich
+ENV PATH=${MPICH_ROOT}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${MPICH_ROOT}/lib:${LD_LIBRARY_PATH}

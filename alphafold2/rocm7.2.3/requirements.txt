@@ -1,0 +1,42 @@
+# AlphaFold + TF CPU stack, sized for AMD GPU via JAX.
+#
+# **Target system ROCm: 7.2.x (e.g. 7.2.3).** On PyPI, ROCm 7.x JAX support is shipped as
+# `jax-rocm7-plugin` / `jax-rocm7-pjrt`. Do *not* install `jax-rocm60-*` on ROCm 7 — those
+# are for the ROCm 6.x wheel line.
+#
+# After upgrading the host from ROCm 6.2.4 → 7.2.3: reinstall this file in a clean venv,
+# ensure `/opt/rocm` matches 7.2.3, and drop any `JAX_ROCM_PLUGIN_INTERNAL_*` overrides
+# that still point at old 6.x paths unless AMD docs tell you otherwise.
+
+absl-py==1.0.0
+biopython==1.81
+dm-tree
+immutabledict
+ml-collections
+numpy==1.26.4
+pandas
+setuptools<82
+tensorflow-cpu==2.18.1
+mock
+tabulate
+msgpack
+chex
+dm-haiku
+# JAX 0.7.1 requires scipy>=1.12
+scipy>=1.12.0,<2
+flax==0.9.0
+# JAX 0.7.1 requires ml_dtypes>=0.5
+ml-dtypes>=0.5.0,<1
+Cython
+
+# --- JAX for ROCm 7.x (PyPI). Keep all four pins on the same release line. ---
+# jax==0.7.1
+# jaxlib==0.7.1
+# jax-rocm7-plugin==0.7.1
+# jax-rocm7-pjrt==0.7.1
+
+# Relaxation (install if you use Amber relax):
+#   pip install "openmm>=8.2" "pdbfixer>=1.8"
+#
+# ROCm 6.2.x (legacy; do not use on ROCm 7):
+#   jax==0.5.0 jaxlib==0.5.0 jax-rocm60-plugin==0.5.0 jax-rocm60-pjrt==0.5.0
