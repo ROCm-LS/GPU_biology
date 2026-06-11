@@ -21,8 +21,6 @@ mkdir -p ${OUTDIR}
 
 # Set cache directory
 CACHEDIR=/scratch/references/boltz
-mkdir -p ${CACHEDIR}
-
 
 srun -N 1 -n 1 -c 8 --gres=gpu:1 \
     singularity exec \
