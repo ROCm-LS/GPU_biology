@@ -1,6 +1,0 @@
-absl-py==1.0.0
-biopython==1.79
-dm-tree==0.1.6
-numpy==1.21.6
-pandas==1.3.4
-scipy==1.7.3
