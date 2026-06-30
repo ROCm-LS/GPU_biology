@@ -102,11 +102,20 @@ docker exec <colabfold_container> python3 -m colabfold.download
 
 Without **`--data`**, `colabfold_batch` uses that default cache path for **weights** (`params/`). The **output folder** argument is results only.
 
-For **FASTA** input, default MSA generation uses the **public ColabFold/MMseqs API** (`--host-url` default), not local files under `/cache`. Pass **`.a3m` / `.a2m`** to skip MSA search. For **MSA in ColabFold → fold in AlphaFold2** with a minimal AF2 tree, see **`alphafold2/scripts/README.md`**.
+For **FASTA** input, default MSA generation uses the **public ColabFold/MMseqs API** (`--host-url` default), not local files under `/cache`. Pass **`.a3m` / `.a2m`** to skip MSA search. Use **`colabfold_batch … --msa-only`** to write **`.a3m`** files without structure prediction (handy before AlphaFold2 fold or to split MSA and GPU jobs). For **MSA in ColabFold → fold in AlphaFold2** with a minimal AF2 tree, see **`alphafold2/scripts/README.md`**.
 
 ## Run (host helper)
 
-Long-running container with `/work` and cache mounts: **`scripts/colabfold_docker_run.sh`** (override `COLABFOLD_ROCM_VERSION`, `COLABFOLD_IMAGE`, `COLABFOLD_CONTAINER_NAME`, etc. as documented in that script).
+Long-running container with `/work`, **`/colabfold_work`** (ColabFold MSA / batch output), and cache mounts: **`scripts/colabfold_docker_run.sh`**. Set **`COLABFOLD_MSA_DIR`** on the host (default **`${HOME}/colabfold_work`**); use the **same** value when starting **`scripts/alphafold2_docker_run.sh`** so AlphaFold2 can read `.a3m` files at `/colabfold_work`.
+
+Example MSA-only run inside the ColabFold container:
+
+```bash
+colabfold_batch /work/query.fasta /colabfold_work/run1 --msa-only
+# → /colabfold_work/run1/query_output/*.a3m (exact names depend on ColabFold)
+```
+
+Override `COLABFOLD_ROCM_VERSION`, `COLABFOLD_IMAGE`, `COLABFOLD_CONTAINER_NAME`, `COLABFOLD_WORK_DIR`, `COLABFOLD_MSA_DIR`, etc. as documented in that script.
 
 ## Related docs
 

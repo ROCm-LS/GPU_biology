@@ -19,7 +19,7 @@ The host scripts use **`split_fold_stitch/container.py`** to wire fold and PyMOL
 ## Prerequisites
 
 - Docker (or Singularity/Apptainer) with ROCm GPU devices passed through as in the `*_docker_run.sh` scripts.
-- For **AlphaFold2**: a host directory mounted at **`/work`** … see root **`README.md`** *Database setups*. For **ColabFold MSAs → AlphaFold2**, see **`alphafold2/scripts/README.md`**. For ColabFold **`/cache`**, see **`colabfold/rocm7.2.3/README.md`**.
+- For **AlphaFold2**: a host directory mounted at **`/work`** … see root **`README.md`** *Database setups*. For **ColabFold MSAs → AlphaFold2**, see **`alphafold2/scripts/README.md`**. ColabFold batch output: **`COLABFOLD_MSA_DIR`** → **`/colabfold_work`** in both **`colabfold_docker_run.sh`** and **`alphafold2_docker_run.sh`**. For ColabFold **`/cache`**, see **`colabfold/rocm7.2.3/README.md`**.
 
 ## PyMOL and split / fold / stitch
 

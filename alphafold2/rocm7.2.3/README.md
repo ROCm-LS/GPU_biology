@@ -91,6 +91,6 @@ The **`Dockerfile`** footer comments describe bind-mounting a host clone over `/
 ## Related docs
 
 - Root **`README.md`** — AlphaFold2 database layouts (full vs minimal) and customer workflow.
-- **`alphafold2/scripts/README.md`** — ColabFold A3M → precomputed MSAs, `run_af2.sh`, minimal `reduced_dbs` workflow.
+- **`alphafold2/scripts/README.md`** — optional minimal-DB workflow (scripts live on host / `/work`, not in the image): ColabFold `.a3m` → precomputed MSAs, `run_af2.sh`.
 - **`scripts/README.md`** — host tiling + fold + stitch examples.
 - **`colabfold/rocm7.2.3/README.md`** — same base pull/build pattern for ColabFold.

@@ -14,7 +14,9 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ALPHAFOLD_HOME="${ALPHAFOLD_HOME:-/app/alphafold}"
+RUN_ALPHAFOLD="${ALPHAFOLD_HOME}/run_alphafold.py"
 
 FASTA="${FASTA:-/work/inputs/10aa.fasta}"
 OUTPUT_DIR="${OUTPUT_DIR:-/work/af2_output}"
@@ -32,7 +34,7 @@ MSA_DIR="${OUTPUT_DIR}/${FASTA_STEM}/msas"
 if [[ "${USE_PRECOMPUTED_MSAS}" == "true" ]]; then
   mkdir -p "${MSA_DIR}"
   if [[ -n "${COLABFOLD_A3M:-}" ]]; then
-    python3 "${REPO_ROOT}/convert_colabfold_a3m_to_sto.py" "${COLABFOLD_A3M}" "${MSA_DIR}"
+    python3 "${SCRIPT_DIR}/convert_colabfold_a3m_to_sto.py" "${COLABFOLD_A3M}" "${MSA_DIR}"
   fi
   _missing=()
   for f in uniref90_hits.sto mgnify_hits.sto small_bfd_hits.sto; do
@@ -42,9 +44,14 @@ if [[ "${USE_PRECOMPUTED_MSAS}" == "true" ]]; then
     echo "Precomputed MSAs incomplete (--use_precomputed_msas). Missing:" >&2
     printf '  %s\n' "${_missing[@]}" >&2
     echo "Jackhmmer would run and require a real UniRef90 FASTA at --uniref90_database_path." >&2
-    echo "Fix: populate the directory above (e.g. COLABFOLD_A3M=/work/colabfold_work/${FASTA_STEM}_output/*.a3m bash $0) or download DBs and set USE_PRECOMPUTED_MSAS=false." >&2
+    echo "Fix: populate the directory above (e.g. COLABFOLD_A3M=/colabfold_work/run1/${FASTA_STEM}_output/*.a3m bash $0) or download DBs and set USE_PRECOMPUTED_MSAS=false." >&2
     exit 1
   fi
+fi
+
+if [[ ! -f "${RUN_ALPHAFOLD}" ]]; then
+  echo "run_alphafold.py not found at ${RUN_ALPHAFOLD}. Set ALPHAFOLD_HOME (default /app/alphafold)." >&2
+  exit 1
 fi
 
 PRECOMPUTED_FLAG=(--use_precomputed_msas=true)
@@ -52,7 +59,7 @@ if [[ "${USE_PRECOMPUTED_MSAS}" != "true" ]]; then
   PRECOMPUTED_FLAG=(--use_precomputed_msas=false)
 fi
 
-python3 "${REPO_ROOT}/run_alphafold.py" \
+python3 "${RUN_ALPHAFOLD}" \
   --fasta_paths="${FASTA}" \
   --output_dir="${OUTPUT_DIR}" \
   --model_preset=monomer \

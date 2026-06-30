@@ -21,7 +21,7 @@ Writes three identical files expected by run_alphafold.py with
 
 Example:
   python3 convert_colabfold_a3m_to_sto.py \\
-    /work/colabfold_work/10aa_output/_10_AAs.a3m \\
+    /colabfold_work/run1/10aa_output/_10_AAs.a3m \\
     /work/af2_out/10aa/msas
 """
 

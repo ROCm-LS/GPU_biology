@@ -9,7 +9,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV ROCM_RELEASE=7.2.3
 ENV ROCM_PATH=/opt/rocm-$ROCM_RELEASE
 ENV PATH=$ROCM_PATH/bin:$ROCM_PATH/llvm/bin:$PATH
-ENV LD_LIBRARY_PATH=/opt/miniforge3/lib:$ROCM_PATH/lib
+ENV LD_LIBRARY_PATH=/opt/mpich/lib:/opt/miniforge3/lib:${ROCM_PATH}/lib
 ENV JAX_PLATFORMS=rocm,cpu
 # JAX/XLA on ROCm 7.2.3: avoid "Too small divisible part of the contracting dimension"
 # (disable Triton GEMM path); align with colabfold/rocm7.2.3/Dockerfile.

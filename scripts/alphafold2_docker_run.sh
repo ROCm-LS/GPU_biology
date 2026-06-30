@@ -5,7 +5,7 @@
 # Default image: alphafold2-amd-gpu:v2.3.2_rocm${ALPHAFOLD2_ROCM_VERSION}
 # Override full image: ALPHAFOLD2_IMAGE=...
 # Override name: ALPHAFOLD2_CONTAINER_NAME
-# Paths: ALPHAFOLD2_CACHE_DIR, ALPHAFOLD2_WORK_DIR, MYSCRATCH
+# Paths: ALPHAFOLD2_CACHE_DIR, ALPHAFOLD2_WORK_DIR, COLABFOLD_MSA_DIR (-> /colabfold_work), MYSCRATCH
 # Default / Pawsey images often have no PyMOL; Docker root: python -m pip install pymol-open-source-whl
 # (Singularity/Setonix: non-root — see scripts/README.md PyMOL section).
 set -euo pipefail
@@ -19,15 +19,17 @@ CONTAINER_NAME="${ALPHAFOLD2_CONTAINER_NAME:-${USER}_alphafold2_rocm${ALPHAFOLD2
 IMAGE="${ALPHAFOLD2_IMAGE:-alphafold2-amd-gpu:v2.3.2_rocm${ALPHAFOLD2_ROCM_VERSION}}"
 CACHE_DIR="${ALPHAFOLD2_CACHE_DIR:-${MYSCRATCH:-$HOME}/alphafold_cache}"
 WORK_DIR="${ALPHAFOLD2_WORK_DIR:-${HOME}/alphafold_work}"
+MSA_DIR="${COLABFOLD_MSA_DIR:-${HOME}/colabfold_work}"
 
 setup_docker_rocm_dev_args
-mkdir -p "${CACHE_DIR}" "${WORK_DIR}"
+mkdir -p "${CACHE_DIR}" "${WORK_DIR}" "${MSA_DIR}"
 
 HIP_DEVICES="$(_discover_hip_visible_devices)"
 echo "Using HIP_VISIBLE_DEVICES=${HIP_DEVICES} (compute GPUs from rocm-smi)"
 echo "ROCm version (image tag): ${ALPHAFOLD2_ROCM_VERSION}  image: ${IMAGE}  container: ${CONTAINER_NAME}"
 echo "Cache: ${CACHE_DIR} -> /cache"
 echo "Work:  ${WORK_DIR} -> /work"
+echo "MSA:   ${MSA_DIR} -> /colabfold_work  (ColabFold .a3m output; set COLABFOLD_MSA_DIR to match colabfold container)"
 
 docker run -d \
   --name "${CONTAINER_NAME}" \
@@ -41,5 +43,6 @@ docker run -d \
   -e "HIP_VISIBLE_DEVICES=${HIP_DEVICES}" \
   -v "${CACHE_DIR}:/cache" \
   -v "${WORK_DIR}:/work" \
+  -v "${MSA_DIR}:/colabfold_work" \
   "${IMAGE}" \
   tail -f /dev/null

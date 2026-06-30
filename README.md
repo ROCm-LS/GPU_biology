@@ -6,8 +6,9 @@ ROCm-oriented **Dockerfiles** and small **host scripts** for structural biology 
 
 | Path | Purpose |
 |------|---------|
+| `setonix_containers/` | Shared **ROCm + MPICH** base for app Dockerfiles — pull [quay.io/pawsey/rocm-mpich-base](https://quay.io/pawsey) or build locally. **`rocm7.2.3-mpich-base/`** (7.2.3 apps); **`rocm-mpich-base/`** (parameterized recipe, e.g. 6.2.4). Helpers: **`build_rocm7.2.3_mpich_base_docker_image.sh`**, **`build_rocm6.2.4_mpich_base_docker_image.sh`** — see **[setonix_containers/rocm7.2.3-mpich-base/README.md](setonix_containers/rocm7.2.3-mpich-base/README.md)**. |
 | `alphafold2/rocm7.2.3/` | AlphaFold2 on ROCm 7.2.3 — see **[alphafold2/rocm7.2.3/README.md](alphafold2/rocm7.2.3/README.md)** for `docker build` (optional **`INSTALL_PYMOL=1`** for single-container stitch). |
-| `alphafold2/scripts/` | AlphaFold2 helpers: **minimal `reduced_dbs` tree**, **ColabFold A3M → precomputed MSAs**, example **`run_af2.sh`** — see **[alphafold2/scripts/README.md](alphafold2/scripts/README.md)** |
+| `alphafold2/scripts/` | **Optional** host helpers (not in Pawsey / app images): minimal **`reduced_dbs`** tree, ColabFold **`.a3m` → `.sto`**, example **`run_af2.sh`** — only for the minimal-DB workflow; see **[alphafold2/scripts/README.md](alphafold2/scripts/README.md)** |
 | `colabfold/rocm7.2.3/` | ColabFold on ROCm 7.2.3 — optional **PyMOL** (`INSTALL_PYMOL`, default on) — see **[colabfold/rocm7.2.3/README.md](colabfold/rocm7.2.3/README.md)**. |
 | `colabfold/rocm6.2.4/` | ColabFold only (matches published Pawsey image; no PyMOL — see [PyMOL](#pymol-for-long-sequence-stitch)) |
 | `scripts/` | Split / fold / stitch entrypoints — **host orchestrators** and **in-container** variants (see below) |
@@ -44,8 +45,8 @@ Published **Pawsey ROCm 6.2.4** ColabFold / AlphaFold2 images ([quay.io/pawsey](
 
 **Containers (long-running `docker run … tail -f`):**
 
-- `colabfold_docker_run.sh` — ColabFold image, `/work` + cache mounts, GPU discovery.
-- `alphafold2_docker_run.sh` — AlphaFold2 image, same pattern.
+- `colabfold_docker_run.sh` — ColabFold: `/work`, **`/colabfold_work`** (MSA output), `/cache`, GPU discovery.
+- `alphafold2_docker_run.sh` — AlphaFold2: `/work`, **`/colabfold_work`** (read ColabFold `.a3m`), `/cache`, same pattern.
 
 **Shared:** `docker_rocm_common.sh`, `rocm_compute_devices.py` (HIP / device checks).
 
@@ -57,9 +58,9 @@ Use the **same** host scripts and **`/work`** bind-mount pattern on your cluster
 
 ### ColabFold — cache under `/cache`
 
-- Start a container with **`scripts/colabfold_docker_run.sh`** (`COLABFOLD_CACHE_DIR` → `/cache`, `XDG_CACHE_HOME=/cache`).
+- Start a container with **`scripts/colabfold_docker_run.sh`** (`COLABFOLD_CACHE_DIR` → `/cache`, `COLABFOLD_WORK_DIR` → `/work`, **`COLABFOLD_MSA_DIR`** → **`/colabfold_work`** for `colabfold_batch` output).
 - **Model params:** `docker exec <container> python3 -m colabfold.download` (see **`colabfold/rocm7.2.3/README.md`**).
-- **FASTA input:** default MSA search uses the public ColabFold/MMseqs API unless you configure local search; **`.a3m` / `.a2m` input** skips MSA search (params still needed to fold in ColabFold).
+- **FASTA input:** default MSA search uses the public ColabFold/MMseqs API unless you configure local search; **`colabfold_batch --msa-only`** writes **`.a3m`** without folding; **`.a3m` / `.a2m` input** skips MSA search (params still needed to fold in ColabFold).
 
 ### AlphaFold2 — `data_dir` under `/work`
 
@@ -89,12 +90,14 @@ For environments where you **do not** mirror the full archive but still want **i
 
 - **Optional — skip large genetic DBs:** if you provide **precomputed MSAs** (`--use_precomputed_msas=true` and paths AlphaFold expects), you can avoid hosting UniRef/BFD-sized data while still using the same tiling/stitch scripts. That is independent of this repo; flags are standard AlphaFold.
 
-### C) ColabFold MSAs → AlphaFold2 fold (smallest combined footprint)
+### C) ColabFold MSAs → AlphaFold2 fold (smallest combined footprint; optional)
+
+Use this only when you want **minimal disk** and are willing to add repo helpers under **`/work`** (they are **not** baked into published images). For **`full_dbs`**, skip **`alphafold2/scripts/`** and run **`run_alphafold.py`** directly.
 
 Use ColabFold for **MSA generation** (reduced **`/cache`** as above), then AlphaFold2 for **prediction** without AF2 genetic DBs:
 
 1. Minimal **`--data_dir`** as in (B) (`create_dummy_reduced_databases.sh` + real **pdb70** only — no large UniRef/MGnify/BFD).
-2. Run **`colabfold_batch`** on FASTA (or pass **`.a3m`** to skip ColabFold search); take the output **`.a3m`** (under `…_output/`).
+2. Run **`colabfold_batch`** on FASTA with **`--msa-only`**, writing under **`/colabfold_work`** (e.g. `colabfold_batch /work/query.fasta /colabfold_work/run1 --msa-only`). Set the same **`COLABFOLD_MSA_DIR`** on both ColabFold and AlphaFold2 containers. See **[alphafold2/scripts/README.md](alphafold2/scripts/README.md)**.
 3. Convert with **`alphafold2/scripts/convert_colabfold_a3m_to_sto.py`** into `{output_dir}/{fasta_stem}/msas/`.
 4. Run **`run_alphafold.py`** with **`--db_preset=reduced_dbs`** and **`--use_precomputed_msas=true`**, or **`alphafold2/scripts/run_af2.sh`** (`COLABFOLD_A3M=…`).
 
