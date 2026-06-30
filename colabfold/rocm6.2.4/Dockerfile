@@ -31,7 +31,7 @@ RUN set -eux ; \
     rm -rf ./Miniforge3-*
 ENV PATH /opt/miniforge3/bin:$PATH
 
-COPY environment.yml requirements-pip.txt .
+COPY environment.yml requirements-pip.txt ./
 # Install conda base env (python + pip only; no pip: section to avoid libmamba pip runner bug).
 RUN mamba install -y --strict-channel-priority \
         python=3.10 pip \
