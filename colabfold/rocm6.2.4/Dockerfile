@@ -31,10 +31,14 @@ RUN set -eux ; \
     rm -rf ./Miniforge3-*
 ENV PATH /opt/miniforge3/bin:$PATH
 
-COPY environment.yml .
-RUN mamba install -y --file environment.yml && \
-    mamba install -c conda-forge -c bioconda -y \
-    colabfold=1.5.5 --no-deps && \
+COPY environment.yml requirements-pip.txt .
+# Install conda base env (python + pip only; no pip: section to avoid libmamba pip runner bug).
+RUN mamba install -y --strict-channel-priority \
+        python=3.10 pip \
+    && mamba clean -afy
+# Install pip packages directly (bypasses libmamba pip integration).
+RUN pip install --no-cache-dir -r requirements-pip.txt
+RUN mamba install -c conda-forge -c bioconda -y colabfold=1.5.5 --no-deps && \
     mamba clean -afy
 
 RUN pip uninstall jax jaxlib -y && \
