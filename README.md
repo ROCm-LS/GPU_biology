@@ -46,7 +46,7 @@ Published **Pawsey ROCm 6.2.4** ColabFold / AlphaFold2 images ([quay.io/pawsey](
 **Containers (long-running `docker run … tail -f`):**
 
 - `colabfold_docker_run.sh` — ColabFold: `/work`, **`/colabfold_work`** (MSA output), `/cache`, GPU discovery.
-- `alphafold2_docker_run.sh` — AlphaFold2: `/work`, **`/colabfold_work`** (read ColabFold `.a3m`), `/cache`, same pattern.
+- `alphafold2_docker_run.sh` — AlphaFold2: `/work`, **`/work/databases`** (`ALPHAFOLD2_DATABASE_DIR`), **`/colabfold_work`**, `/cache`.
 
 **Shared:** `docker_rocm_common.sh`, `rocm_compute_devices.py` (HIP / device checks).
 
@@ -62,7 +62,9 @@ Use the **same** host scripts and **`/work`** bind-mount pattern on your cluster
 - **Model params:** `docker exec <container> python3 -m colabfold.download` (see **`colabfold/rocm7.2.3/README.md`**).
 - **FASTA input:** default MSA search uses the public ColabFold/MMseqs API unless you configure local search; **`colabfold_batch --msa-only`** writes **`.a3m`** without folding; **`.a3m` / `.a2m` input** skips MSA search (params still needed to fold in ColabFold).
 
-### AlphaFold2 — `data_dir` under `/work`
+### AlphaFold2 — `data_dir` under `/work/databases`
+
+Start the container with **`scripts/alphafold2_docker_run.sh`**: host **`ALPHAFOLD2_DATABASE_DIR`** (default **`${MYSCRATCH:-$HOME}/alphafold_databases`**) is bind-mounted at **`/work/databases`**. Use **`--data_dir=/work/databases`** in `run_alphafold.py` / **`run_af2.sh`** (`ALPHAFOLD_DATA_DIR`).
 
 ### A) Full databases (typical customer / production)
 

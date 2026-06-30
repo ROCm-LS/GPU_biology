@@ -96,7 +96,7 @@ GPU_biology **does not `COPY` these into app images** — same as published Paws
 | **`docker cp`** | Quick local test into a running container — see below |
 | **Extra bind-mount** | Dev: `-v …/GPU_biology/alphafold2/scripts:/work/af2_scripts:ro` on `docker run` |
 
-`create_dummy_reduced_databases.sh` runs on the **host** (or any shell); point the output tree at **`/work/databases`** in the container.
+`create_dummy_reduced_databases.sh` runs on the **host**; set **`ALPHAFOLD2_DATABASE_DIR`** to that output tree (mounted at **`/work/databases`** by **`alphafold2_docker_run.sh`**, default `${MYSCRATCH:-$HOME}/alphafold_databases`).
 
 **`docker cp` into a running AlphaFold2 container** (after `scripts/alphafold2_docker_run.sh`):
 

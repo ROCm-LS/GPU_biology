@@ -82,7 +82,7 @@ Optional: `DOCKER_BUILDKIT=1` for layer caching.
 
 ## Run (host helper)
 
-Long-running container with `/work` and cache mounts: **`scripts/alphafold2_docker_run.sh`**. Set **`ALPHAFOLD2_ROCM_VERSION`** or **`ALPHAFOLD2_IMAGE`** to the tag you built (with or without `_pymol`).
+Long-running container: **`scripts/alphafold2_docker_run.sh`** (`/work`, **`/work/databases`**, `/colabfold_work`, `/cache`). Set **`ALPHAFOLD2_DATABASE_DIR`**, **`ALPHAFOLD2_ROCM_VERSION`**, or **`ALPHAFOLD2_IMAGE`** as needed.
 
 ## Persistence / bind mounts
 
