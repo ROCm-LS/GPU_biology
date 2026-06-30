@@ -207,7 +207,7 @@ RUN echo "Building rocm ${ROCM_VERSION}" \
     && if [ $rocm_major -ge 7 ]; then ROCM_INSTALLER_VERSION=${ROCM_VERSION}.${ROCM_INSTALLER_VERSION}; \
         else \
         ROCM_INSTALLER_VERSION=${rocm_major}.${rocm_minor}.${ROCM_INSTALLER_VERSION}; fi \
-    && cd /tmp/build \
+    && mkdir -p /tmp/build && cd /tmp/build \
     # && wget https://bootstrap.pypa.io/get-pip.py \
     # && python3 get-pip.py \
     # CMEYER: Need jammy for < rocm6.2, noble for > rocm6.2
