@@ -7,25 +7,40 @@ ROCm-oriented **Dockerfiles** and small **host scripts** for structural biology 
 | Path | Purpose |
 |------|---------|
 | `alphafold2/rocm7.2.3/` | AlphaFold2 on ROCm 7.2.3 — see **[alphafold2/rocm7.2.3/README.md](alphafold2/rocm7.2.3/README.md)** for `docker build` (optional **`INSTALL_PYMOL=1`** for single-container stitch). |
-| `alphafold2/scripts/` | Host helper: **minimal dummy DB layout** for `reduced_dbs` (see below) |
+| `alphafold2/scripts/` | AlphaFold2 helpers: **minimal `reduced_dbs` tree**, **ColabFold A3M → precomputed MSAs**, example **`run_af2.sh`** — see **[alphafold2/scripts/README.md](alphafold2/scripts/README.md)** |
 | `colabfold/rocm7.2.3/` | ColabFold on ROCm 7.2.3 — optional **PyMOL** (`INSTALL_PYMOL`, default on) — see **[colabfold/rocm7.2.3/README.md](colabfold/rocm7.2.3/README.md)**. |
-| `colabfold/rocm6.2.4/` | ColabFold only (no PyMOL in image; see below) |
-| `scripts/` | Host entrypoints (see below) |
+| `colabfold/rocm6.2.4/` | ColabFold only (matches published Pawsey image; no PyMOL — see [PyMOL](#pymol-for-long-sequence-stitch)) |
+| `scripts/` | Split / fold / stitch entrypoints — **host orchestrators** and **in-container** variants (see below) |
 | `examples/` | Optional sample inputs / HPC snippets (not required for the core flow) |
 
-## Host scripts (`scripts/`)
+## Scripts (`scripts/`)
+
+Each of **ColabFold** and **AlphaFold2** has two pipeline scripts:
+
+| Variant | Scripts | Where it runs |
+|---------|---------|---------------|
+| **Host orchestrator** | `split_and_fold_segments_colabfold.py`, `split_and_fold_segments_alphafold2.py` | **Host** — launches fold (ColabFold or AlphaFold2) in one container and PyMOL in another via `split_fold_stitch/` |
+| **In-container** | `split_and_fold_segments_colabfold_single_container.py`, `split_and_fold_segments_alphafold2_single_container.py` | **Inside** the fold container — tiling, fold, and PyMOL stitch in one Python process |
 
 **Long-sequence tiling (optional):**
 
-- **ColabFold** — `split_and_fold_segments_colabfold.py`: FASTA or A2M/A3M → `colabfold_batch` (GPU container) → PyMOL stitch (separate container). Uses `split_fold_stitch/` helpers.
-- **AlphaFold2** — `split_and_fold_segments_alphafold2.py`: **FASTA only** → `run_alphafold.py` (AlphaFold2 container) → PyMOL stitch. You pass all `run_alphafold.py` flags after `--`. The **database layout** can be either a full install or a **minimal stub tree** (see [AlphaFold2 database setups](#alphafold2-database-setups-same-scripts-both-sites) below); the host scripts are the same in both cases.
+- **ColabFold** — `split_and_fold_segments_colabfold.py` (**host**): FASTA or A2M/A3M → `colabfold_batch` (GPU container) → PyMOL stitch (separate container). Uses `split_fold_stitch/` helpers.
+- **AlphaFold2** — `split_and_fold_segments_alphafold2.py` (**host**): **FASTA only** → `run_alphafold.py` (AlphaFold2 container) → PyMOL stitch. You pass all `run_alphafold.py` flags after `--`. The **database layout** can be either a full install or a **minimal stub tree** (see [AlphaFold2 database setups](#alphafold2-database-setups-same-scripts-both-sites) below); the host scripts are the same in both cases.
 
-**Single-container (run inside one fold image; tiling + fold + PyMOL stitch in-process):**
+**In-container** (tiling + fold + PyMOL stitch in one process; run **inside** the fold image):
 
 - **`split_and_fold_segments_colabfold_single_container.py`** — **ColabFold + PyMOL** in one image; build **`colabfold/rocm7.2.3/`** with default **`INSTALL_PYMOL=1`** (see **`colabfold/rocm7.2.3/README.md`**). **`INSTALL_PYMOL=0`** or **`colabfold/rocm6.2.4/`** → use the **two-container** flow below or extend the image.
 - **`split_and_fold_segments_alphafold2_single_container.py`** — AlphaFold2 + PyMOL in one process. Use an image built with **`INSTALL_PYMOL=1`** (see **`alphafold2/rocm7.2.3/README.md`**); the default Dockerfile build has no PyMOL (use **`split_and_fold_segments_alphafold2.py`** + a PyMOL container, or extend the image).
 
-For **host-orchestrated** two-container runs (separate ColabFold or AlphaFold2 container + PyMOL container), use `split_and_fold_segments_colabfold.py` and `split_and_fold_segments_alphafold2.py` instead. See `scripts/README.md`.
+For **host-orchestrated** runs, use `split_and_fold_segments_colabfold.py` and `split_and_fold_segments_alphafold2.py` on the **host**. For **in-container** runs, use the `*_single_container.py` scripts inside the fold image. Details: `scripts/README.md`.
+
+### PyMOL for long-sequence stitch
+
+Published **Pawsey ROCm 6.2.4** ColabFold / AlphaFold2 images ([quay.io/pawsey](https://quay.io/pawsey)) do **not** include PyMOL. That is expected for folding only.
+
+- **Singularity / Apptainer (typical on Setonix):** use the **two-container** host scripts — fold `.sif` + a separate PyMOL `.sif` — or rebuild the fold image with PyMOL baked in before `singularity build`. Runtime `pip install` inside the fold `.sif` fails because the process is **not root**.
+- **Docker with root in the container:** as **root**, run `python -m pip install pymol-open-source-whl` (or the full `apt` + pip stack in **`scripts/README.md`**) via **`docker exec`**, then run the **single-container** scripts inside that container.
+- **ROCm 7.2.3 local builds:** optional PyMOL at image build time — **`colabfold/rocm7.2.3/README.md`** (default on) and **`alphafold2/rocm7.2.3/README.md`** (`INSTALL_PYMOL=1`).
 
 **Containers (long-running `docker run … tail -f`):**
 
@@ -36,9 +51,17 @@ For **host-orchestrated** two-container runs (separate ColabFold or AlphaFold2 c
 
 See `scripts/README.md` for paths, env overrides, and one-line examples.
 
-## AlphaFold2 database setups (same scripts, both sites)
+## Database setups (ColabFold and AlphaFold2)
 
-Use the **same** `scripts/split_and_fold_segments_alphafold2.py`, container images, and **`/work` bind-mount idea** on your cluster and at a customer. Only the **`run_alphafold.py` arguments after `--`** and the contents of **`--data_dir`** differ.
+Use the **same** host scripts and **`/work`** bind-mount pattern on your cluster and at a customer. **ColabFold** keeps its DBs under **`/cache`**; **AlphaFold2** uses **`--data_dir`** (often `/work/databases`). Both support **reduced** layouts — ColabFold’s default MSA stack is smaller than AlphaFold **`full_dbs`**; AlphaFold **`reduced_dbs` + precomputed MSAs** can be smaller still on disk. Details: **`colabfold/rocm7.2.3/README.md`** (cache) and **`alphafold2/scripts/README.md`** (MSA handoff).
+
+### ColabFold — cache under `/cache`
+
+- Start a container with **`scripts/colabfold_docker_run.sh`** (`COLABFOLD_CACHE_DIR` → `/cache`, `XDG_CACHE_HOME=/cache`).
+- **Model params:** `docker exec <container> python3 -m colabfold.download` (see **`colabfold/rocm7.2.3/README.md`**).
+- **FASTA input:** default MSA search uses the public ColabFold/MMseqs API unless you configure local search; **`.a3m` / `.a2m` input** skips MSA search (params still needed to fold in ColabFold).
+
+### AlphaFold2 — `data_dir` under `/work`
 
 ### A) Full databases (typical customer / production)
 
@@ -66,7 +89,18 @@ For environments where you **do not** mirror the full archive but still want **i
 
 - **Optional — skip large genetic DBs:** if you provide **precomputed MSAs** (`--use_precomputed_msas=true` and paths AlphaFold expects), you can avoid hosting UniRef/BFD-sized data while still using the same tiling/stitch scripts. That is independent of this repo; flags are standard AlphaFold.
 
-**Summary:** customer runs (A) with `full_dbs` and a real data mirror; your cluster runs (B) with `reduced_dbs`, a small `databases` tree, pdb70 from the image’s scripts, and placeholders or precomputed MSAs as needed. **`split_and_fold_segments_alphafold2.py` does not change** between the two.
+### C) ColabFold MSAs → AlphaFold2 fold (smallest combined footprint)
+
+Use ColabFold for **MSA generation** (reduced **`/cache`** as above), then AlphaFold2 for **prediction** without AF2 genetic DBs:
+
+1. Minimal **`--data_dir`** as in (B) (`create_dummy_reduced_databases.sh` + real **pdb70** only — no large UniRef/MGnify/BFD).
+2. Run **`colabfold_batch`** on FASTA (or pass **`.a3m`** to skip ColabFold search); take the output **`.a3m`** (under `…_output/`).
+3. Convert with **`alphafold2/scripts/convert_colabfold_a3m_to_sto.py`** into `{output_dir}/{fasta_stem}/msas/`.
+4. Run **`run_alphafold.py`** with **`--db_preset=reduced_dbs`** and **`--use_precomputed_msas=true`**, or **`alphafold2/scripts/run_af2.sh`** (`COLABFOLD_A3M=…`).
+
+Full steps, flags, and tiling with **`.a3m` input**: **[alphafold2/scripts/README.md](alphafold2/scripts/README.md)**.
+
+**Summary:** customer runs may use full DB mirrors on either tool; internal cluster runs use **ColabFold `/cache`** (optionally `SKIP_TEMPLATES`, `mmseqs2_uniref`) plus **AlphaFold `reduced_dbs`** with ColabFold-derived `.sto` files. Host tiling scripts are unchanged.
 
 ## Customer workflow (minimal)
 

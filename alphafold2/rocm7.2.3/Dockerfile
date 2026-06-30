@@ -1,10 +1,6 @@
-FROM rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04
-# Optional: rebuild that base from GPU_biology root (see alphafold2/rocm7.2.3/README.md).
-# Context must be setonix_containers/mpi (vendor lustrempich-base/; not bundled in GPU_biology).
-#   docker build --no-cache --build-arg ROCM_VERSION=7.2.3 --build-arg OS_VERSION=24.04 \
-#     -t quay.io/pawsey/rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04 \
-#     -f setonix_containers/mpi/rocm-mpich-base/buildrocm-mpich-base.dockerfile \
-#     setonix_containers/mpi
+# ROCm MPICH base: pull or build locally — see alphafold2/rocm7.2.3/README.md (BASE_IMAGE).
+ARG BASE_IMAGE=rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04
+FROM ${BASE_IMAGE}
 
 # Use bash to support string substitution.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]

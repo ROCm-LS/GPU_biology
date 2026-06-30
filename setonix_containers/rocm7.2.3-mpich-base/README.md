@@ -1,36 +1,43 @@
-# Building the rocm container
+# ROCm 7.2.3 MPICH base
 
-This recipe can be built with the following build args:
+Builds **`rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04`** for **`alphafold2/rocm7.2.3/`** and **`colabfold/rocm7.2.3/`**.
 
-* `OS_VERSION` (default `24.04`)
-* `LINUX_KERNEL` (default `6.8.0-31`)
-* `ROCM_VERSION` (default `6.0.2`)
-* `MPICH_VERSION` (default `3.4.3`)
+## Pull or build
 
-Published images use the tag format `quay.io/pawsey/rocm-mpich-base:rocm<ROCM>-mpich<MPICH>-ubuntu<OS>`. Downstream recipes already consume this naming, for example the [ColabFold ROCm 6.2.4 image](https://github.com/SarahBeecroft/amd_porting/blob/e8dd6626a418a55a3cfb05af1efacd8423facb76/colabfold/rocm6.2.4/Dockerfile#L1):
+```bash
+LOCAL=rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04
+QUAY=quay.io/pawsey/rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04
 
-```dockerfile
-FROM quay.io/pawsey/rocm-mpich-base:rocm6.2.4-mpich3.4.3-ubuntu24.04
+# When published on Quay:
+docker pull "$QUAY" && docker tag "$QUAY" "$LOCAL"
+
+# Or build from GPU_biology repo root:
+bash setonix_containers/build_rocm7.2.3_mpich_base_docker_image.sh
 ```
 
-To build the same base with ROCm 7.2.3, keep `mpich3.4.3` and `ubuntu24.04` in the tag and only change the ROCm version.
+Manual build (same as the script):
 
-This container provides:
-
-* libfabric
-* lustre
-* lustre aware mpi build with libfabric
-* rocm
-* rccl
-* osu microbenchmarks that provide tests for checking the mpi works
-
-Example build. Use `setonix/mpi` as the build context (the final `.`) so the dockerfile can `COPY` MPICH patches from `lustrempich-base/`:
-
-```
-cd setonix
-sudo docker build \
+```bash
+docker build \
   --build-arg ROCM_VERSION=7.2.3 \
   --build-arg OS_VERSION=24.04 \
-  -t quay.io/pawsey/rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04 \
-  -f rocm-mpich-base/buildrocm-mpich-base.dockerfile .
+  -t rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04 \
+  -f setonix_containers/rocm7.2.3-mpich-base/buildrocm-mpich-base.dockerfile \
+  setonix_containers
 ```
+
+- **Context:** **`setonix_containers`** (needs **`lustrempich-base/`** vendored there).
+- **Ignore** **`setonix_containers/mpi/`** — accidental duplicate of the parent tree.
+
+App images: **`alphafold2/rocm7.2.3/README.md`**, **`colabfold/rocm7.2.3/README.md`**.
+
+## Build arguments
+
+| Argument | Default | Notes |
+|----------|---------|--------|
+| `OS_VERSION` | `24.04` | |
+| `ROCM_VERSION` | `6.0.2` | Pass **`7.2.3`** |
+| `LINUX_KERNEL` | `6.8.0-31` | |
+| `MPICH_VERSION` | `3.4.3` | |
+
+Provides: libfabric, Lustre client, Lustre-aware MPICH, ROCm, RCCL, OSU micro-benchmarks.

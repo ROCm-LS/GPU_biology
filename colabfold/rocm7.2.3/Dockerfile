@@ -3,13 +3,9 @@
 # One-time weights (large): --build-arg DOWNLOAD_WEIGHTS=1
 # PyMOL (single-container stitch): default on; --build-arg INSTALL_PYMOL=0 to omit.
 # Or after first run: docker exec <container> python3 -m colabfold.download  (use mounted /cache)
-FROM rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04
-# Optional: rebuild that base from GPU_biology root (see colabfold/rocm7.2.3/README.md).
-# Context must be setonix_containers/mpi (vendor lustrempich-base/; not bundled in GPU_biology).
-#   docker build --no-cache --build-arg ROCM_VERSION=7.2.3 --build-arg OS_VERSION=24.04 \
-#     -t quay.io/pawsey/rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04 \
-#     -f setonix_containers/mpi/rocm-mpich-base/buildrocm-mpich-base.dockerfile \
-#     setonix_containers/mpi
+# ROCm MPICH base: pull or build locally — see colabfold/rocm7.2.3/README.md (BASE_IMAGE).
+ARG BASE_IMAGE=rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04
+FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

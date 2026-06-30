@@ -17,12 +17,13 @@ r"""
 Split, fold (``run_alphafold.py``), and stitch long sequences **inside one AlphaFold2
 Docker image** that also has ``pymol-open-source`` available (often installed with root).
 
+**Runs inside the fold container** (e.g. ``docker exec -w /work <af2_container> python3 …``).
+For a **host** that launches separate AlphaFold2 and PyMOL containers, use
+``split_and_fold_segments_alphafold2.py`` in this directory instead.
+
 Same workflow idea as ``split_and_fold_segments_colabfold_single_container.py``, but
 calling ``run_alphafold.py`` instead of ``colabfold_batch``. Duplicate tiling / PyMOL
 logic vs the dual-container host scripts is intentional (standalone).
-
-For a **host** that launches separate AlphaFold2 and PyMOL containers, use
-``split_and_fold_segments_alphafold2.py`` in this directory instead.
 
 Requires: PyMOL Python API, AlphaFold deps, hhsearch/jackhmmer on PATH when not using
 precomputed MSAs.

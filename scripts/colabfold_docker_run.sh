@@ -4,6 +4,8 @@
 # ROCm stack version (image tag suffix): set COLABFOLD_ROCM_VERSION (default 6.2.4).
 # Default image: colabfold-amd-gpu:rocm${COLABFOLD_ROCM_VERSION}
 # Override full image: COLABFOLD_IMAGE=quay.io/pawsey/colabfold:rocm6.2.4
+# Published Pawsey images have no PyMOL; as root in Docker: python -m pip install pymol-open-source-whl
+# (Singularity/Setonix: non-root — use two-container scripts; see scripts/README.md PyMOL section).
 # Override name: COLABFOLD_CONTAINER_NAME
 # Paths: COLABFOLD_CACHE_DIR, COLABFOLD_WORK_DIR, MYSCRATCH
 set -euo pipefail

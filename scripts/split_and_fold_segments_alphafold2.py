@@ -2,6 +2,10 @@
 """
 Long FASTA → tiled segments → **AlphaFold2** (one container) → **PyMOL** stitch (another).
 
+**Runs on the host.** This script orchestrates Docker / Singularity containers; it does
+not run inside the AlphaFold2 image. For tiling + fold + stitch in one process inside
+the fold container, use ``split_and_fold_segments_alphafold2_single_container.py``.
+
 Designed for a **standard AlphaFold2 setup**: local database tree and ``run_alphafold.py``
 flags you pass after ``--`` (e.g. ``--data_dir``, ``--model_preset``, ``--db_preset``).
 Each run writes ``<--af2-output-base>/<fasta_stem>/ranked_*.pdb``; stitching uses those paths.

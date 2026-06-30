@@ -70,6 +70,7 @@ Minimal AlphaFold2 "reduced_dbs" layout (GPU_biology).
 
 - uniref90/, mgnify/, small_bfd/: **dummy FASTA placeholders** — not for production MSA.
   Use --use_precomputed_msas=true and real .sto/.a3m under your run if you skip real DBs.
+  ColabFold .a3m → .sto: alphafold2/scripts/convert_colabfold_a3m_to_sto.py (see alphafold2/scripts/README.md).
 - pdb_mmcif/: obsolete.dat present; mmcif_files/ is empty — add mmCIFs if you enable templates
   beyond PDB70, or rely on PDB70 only per your flags.
 - pdb70/pdb70/: **empty inner dir** — populate with the real PDB70 download (see pdb70/README_PDB70.txt).

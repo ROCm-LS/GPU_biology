@@ -6,6 +6,8 @@
 # Override full image: ALPHAFOLD2_IMAGE=...
 # Override name: ALPHAFOLD2_CONTAINER_NAME
 # Paths: ALPHAFOLD2_CACHE_DIR, ALPHAFOLD2_WORK_DIR, MYSCRATCH
+# Default / Pawsey images often have no PyMOL; Docker root: python -m pip install pymol-open-source-whl
+# (Singularity/Setonix: non-root — see scripts/README.md PyMOL section).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
