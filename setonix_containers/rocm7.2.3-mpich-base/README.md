@@ -27,7 +27,7 @@ This container provides:
 Example build. Use `setonix/mpi` as the build context (the final `.`) so the dockerfile can `COPY` MPICH patches from `lustrempich-base/`:
 
 ```
-cd setonix/mpi
+cd setonix
 sudo docker build \
   --build-arg ROCM_VERSION=7.2.3 \
   --build-arg OS_VERSION=24.04 \

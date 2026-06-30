@@ -1,4 +1,4 @@
-FROM quay.io/pawsey/rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04
+FROM rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04
 # Optional: rebuild that base from GPU_biology root (see alphafold2/rocm7.2.3/README.md).
 # Context must be setonix_containers/mpi (vendor lustrempich-base/; not bundled in GPU_biology).
 #   docker build --no-cache --build-arg ROCM_VERSION=7.2.3 --build-arg OS_VERSION=24.04 \
@@ -10,11 +10,11 @@ FROM quay.io/pawsey/rocm-mpich-base:rocm7.2.3-mpich3.4.3-ubuntu24.04
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # ROCm environment
-ENV ROCM_RELEASE 7.2.3
-ENV ROCM_PATH /opt/rocm-$ROCM_RELEASE
-ENV PATH $ROCM_PATH/bin:$ROCM_PATH/llvm/bin:$PATH
-ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:$ROCM_PATH/lib:/opt/miniforge3/lib
-ENV JAX_PLATFORMS "rocm,cpu"
+ENV ROCM_RELEASE=7.2.3
+ENV ROCM_PATH=/opt/rocm-$ROCM_RELEASE
+ENV PATH=$ROCM_PATH/bin:$ROCM_PATH/llvm/bin:$PATH
+ENV LD_LIBRARY_PATH=/opt/miniforge3/lib:$ROCM_PATH/lib
+ENV JAX_PLATFORMS=rocm,cpu
 # JAX/XLA on ROCm 7.2.3: avoid "Too small divisible part of the contracting dimension"
 # (disable Triton GEMM path); align with colabfold/rocm7.2.3/Dockerfile.
 ENV XLA_PYTHON_CLIENT_PREALLOCATE=false
@@ -22,7 +22,7 @@ ENV XLA_PYTHON_CLIENT_ALLOCATOR=platform
 ENV JAX_PLATFORM_NAME=gpu
 ENV XLA_FLAGS="--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=false"
 # XLA ROCm: lld on PATH; LLVM for some jaxlib paths.
-ENV LLVM_PATH $ROCM_PATH/llvm
+ENV LLVM_PATH=$ROCM_PATH/llvm
 # If the JAX ROCm plugin cannot find HIP bitcode, set these to your layout (Pawsey images
 # sometimes expose bitcode under Clang’s tree; there may be a symlink at $ROCM_PATH/amdgcn/bitcode).
 ENV HIP_DEVICE_LIB_PATH=$ROCM_PATH/lib/llvm/amdgcn/bitcode
@@ -57,7 +57,7 @@ RUN set -eux; \
 WORKDIR /opt
 
 # Clone alphafold
-ENV ALPHAFOLD_PATH /app/alphafold
+ENV ALPHAFOLD_PATH=/app/alphafold
 RUN set -eux ; \
     git clone --branch v2.3.2 https://github.com/google-deepmind/alphafold.git $ALPHAFOLD_PATH ; \
     cd $ALPHAFOLD_PATH ; \
@@ -73,7 +73,7 @@ RUN set -eux ; \
     curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh" ; \
     bash Miniforge3-$(uname)-$(uname -m).sh -b -p /opt/miniforge3 -s ; \
     rm -rf ./Miniforge3-*
-ENV PATH /opt/miniforge3/bin:$PATH
+ENV PATH=/opt/miniforge3/bin:$PATH
 
 # streamhpc::openmm-hip==8.0.0 is gone from repodata; conda-forge openmm-hip 8.1.1 solves with pdbfixer.
 RUN mamba install -y -c conda-forge -c bioconda --strict-channel-priority \

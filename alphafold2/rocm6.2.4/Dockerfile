@@ -4,11 +4,11 @@ FROM quay.io/pawsey/rocm-mpich-base:rocm6.2.4-mpich3.4.3-ubuntu24.04
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # ROCm environment
-ENV ROCM_RELEASE 6.2.4
-ENV ROCM_PATH /opt/rocm-$ROCM_RELEASE
-ENV PATH $ROCM_PATH/bin:$ROCM_PATH/llvm/bin:$PATH
-ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:$ROCM_PATH/lib:/opt/miniforge3/lib
-ENV JAX_PLATFORMS "rocm,cpu"
+ENV ROCM_RELEASE=6.2.4
+ENV ROCM_PATH=/opt/rocm-${ROCM_RELEASE}
+ENV PATH=${ROCM_PATH}/bin:${ROCM_PATH}/llvm/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/mpich/lib:${ROCM_PATH}/lib:/opt/miniforge3/lib
+ENV JAX_PLATFORMS=rocm,cpu
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update --quiet \
@@ -29,7 +29,7 @@ RUN apt-get update --quiet \
 WORKDIR /opt
 
 # Clone alphafold 
-ENV ALPHAFOLD_PATH /app/alphafold
+ENV ALPHAFOLD_PATH=/app/alphafold
 RUN set -eux ; \
     git clone --branch v2.3.2 https://github.com/google-deepmind/alphafold.git $ALPHAFOLD_PATH ; \
     cd $ALPHAFOLD_PATH ; \
@@ -44,7 +44,7 @@ RUN set -eux ; \
     curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh" ; \
     bash Miniforge3-$(uname)-$(uname -m).sh -b -p /opt/miniforge3 -s ; \
     rm -rf ./Miniforge3-*
-ENV PATH /opt/miniforge3/bin:$PATH
+ENV PATH=/opt/miniforge3/bin:${PATH}
 
 RUN mamba install -y -c conda-forge -c bioconda \
     python=3.11 \

@@ -298,4 +298,7 @@ RUN echo "export NCCL_SOCKET_IFNAME=hsn"  >> /.singularity.d/env/91-environment.
 
 # and copy the recipe into the docker recipes directory
 RUN mkdir -p /opt/docker-recipes/
-COPY buildrocm-mpich-base.dockerfile /opt/docker-recipes/
+COPY rocm-mpich-base/buildrocm-mpich-base.dockerfile /opt/docker-recipes/
+ENV MPICH_ROOT=/opt/mpich
+ENV PATH=${MPICH_ROOT}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${MPICH_ROOT}/lib:${LD_LIBRARY_PATH:-}
