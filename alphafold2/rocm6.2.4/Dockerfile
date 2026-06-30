@@ -51,7 +51,7 @@ RUN mamba install -y -c conda-forge -c bioconda \
     pdbfixer==1.9 \
     bioconda::hhsuite
     
-RUN mamba install -y -c streamhpc -c conda-forge --strict-channel-priority openmm-hip==8.0.0 && \
+RUN mamba install -y -c streamhpc -c conda-forge --channel-priority flexible openmm-hip==8.0.0 && \
     mamba clean -afy
 
 # Install pip packages.
