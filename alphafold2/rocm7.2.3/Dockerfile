@@ -5,11 +5,13 @@ FROM ${BASE_IMAGE}
 # Use bash to support string substitution.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# ROCm environment
+# ROCm environment (base image installs to /opt/rocm — not /opt/rocm-$ROCM_RELEASE).
 ENV ROCM_RELEASE=7.2.3
-ENV ROCM_PATH=/opt/rocm-$ROCM_RELEASE
-ENV PATH=$ROCM_PATH/bin:$ROCM_PATH/llvm/bin:$PATH
-ENV LD_LIBRARY_PATH=/opt/mpich/lib:/opt/miniforge3/lib:${ROCM_PATH}/lib
+ENV ROCM_PATH=/opt/rocm
+ENV PATH=${ROCM_PATH}/bin:${ROCM_PATH}/lib/llvm/bin:$PATH
+# ROCm 7 libs must precede conda's ROCm 6 stubs (libhsa-runtime64, libamdhip64)
+# so jax_rocm7_plugin finds the correct symbol versions at runtime.
+ENV LD_LIBRARY_PATH=${ROCM_PATH}/lib:/opt/mpich/lib:/opt/miniforge3/lib
 ENV JAX_PLATFORMS=rocm,cpu
 # JAX/XLA on ROCm 7.2.3: avoid "Too small divisible part of the contracting dimension"
 # (disable Triton GEMM path); align with colabfold/rocm7.2.3/Dockerfile.
@@ -18,12 +20,10 @@ ENV XLA_PYTHON_CLIENT_ALLOCATOR=platform
 ENV JAX_PLATFORM_NAME=gpu
 ENV XLA_FLAGS="--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=false"
 # XLA ROCm: lld on PATH; LLVM for some jaxlib paths.
-ENV LLVM_PATH=$ROCM_PATH/llvm
-# If the JAX ROCm plugin cannot find HIP bitcode, set these to your layout (Pawsey images
-# sometimes expose bitcode under Clang’s tree; there may be a symlink at $ROCM_PATH/amdgcn/bitcode).
-ENV HIP_DEVICE_LIB_PATH=$ROCM_PATH/lib/llvm/amdgcn/bitcode
-ENV JAX_ROCM_PLUGIN_INTERNAL_BITCODE_PATH=$ROCM_PATH/lib/llvm/amdgcn/bitcode
-ENV JAX_ROCM_PLUGIN_INTERNAL_LLD_PATH=$ROCM_PATH/llvm/bin
+ENV LLVM_PATH=${ROCM_PATH}/lib/llvm
+ENV HIP_DEVICE_LIB_PATH=${ROCM_PATH}/lib/llvm/amdgcn/bitcode
+ENV JAX_ROCM_PLUGIN_INTERNAL_BITCODE_PATH=${ROCM_PATH}/lib/llvm/amdgcn/bitcode
+ENV JAX_ROCM_PLUGIN_INTERNAL_LLD_PATH=${ROCM_PATH}/lib/llvm/bin
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN set -eux; \
@@ -74,31 +74,33 @@ ENV PATH=/opt/miniforge3/bin:$PATH
 # streamhpc::openmm-hip==8.0.0 is gone from repodata; conda-forge openmm-hip 8.1.1 solves with pdbfixer.
 RUN mamba install -y -c conda-forge -c bioconda --strict-channel-priority \
     python=3.11 \
+    'setuptools<82' \
     pdbfixer==1.9 \
     bioconda::hhsuite \
     openmm-hip=8.1.1 \
     && mamba clean -afy
 
-# xla_rocm7 set_rocm_paths() recognizes pip package "rocm" or Miniforge site-packages/rocm/lib -> system ROCm.
-RUN PY_SITE="$(/opt/miniforge3/bin/python3 -c 'import site; print(site.getsitepackages()[0])')" && \
-    mkdir -p "${PY_SITE}/rocm" && \
-    ln -sfn "${ROCM_PATH}/lib" "${PY_SITE}/rocm/lib"
-
 # Install pip packages.
 COPY requirements.txt /app/alphafold/requirements.txt
-# JAX: ROCm 7 PJRT/plugin + jaxlib from ROCm/jax releases (rocm-jax-v0.7.1, cp311).
-# Do not use jax_rocm60_* on ROCm 7. Install order follows AMD JAX-on-ROCm guidance.
+# JAX ROCm 7: AMD order pjrt → plugin → jaxlib → jax (after clearing PyPI jax from requirements).
 ARG ROCM_JAX_TAG=rocm-jax-v0.7.1
 ARG JAX_ROCM_VER=0.7.1
 RUN pip3 install -r /app/alphafold/requirements.txt --no-cache-dir --root-user-action=ignore --break-system-packages && \
     pip uninstall -y jax jaxlib jax-rocm60-pjrt jax-rocm60-plugin jax-rocm7-pjrt jax-rocm7-plugin 2>/dev/null || true && \
     rm -rf /opt/miniforge3/lib/python3.11/site-packages/jax_plugins && \
     python3 -m pip install --no-cache-dir --root-user-action=ignore --break-system-packages \
-        "jax==${JAX_ROCM_VER}" --no-deps && \
+        "https://github.com/ROCm/jax/releases/download/${ROCM_JAX_TAG}/jax_rocm7_pjrt-${JAX_ROCM_VER}-py3-none-manylinux_2_28_x86_64.whl" && \
     python3 -m pip install --no-cache-dir --root-user-action=ignore --break-system-packages \
-        "https://github.com/ROCm/jax/releases/download/${ROCM_JAX_TAG}/jax_rocm7_pjrt-${JAX_ROCM_VER}-py3-none-manylinux_2_28_x86_64.whl" \
-        "https://github.com/ROCm/jax/releases/download/${ROCM_JAX_TAG}/jax_rocm7_plugin-${JAX_ROCM_VER}-cp311-cp311-manylinux_2_28_x86_64.whl" \
-        "https://github.com/ROCm/jax/releases/download/${ROCM_JAX_TAG}/jaxlib-${JAX_ROCM_VER}-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+        "https://github.com/ROCm/jax/releases/download/${ROCM_JAX_TAG}/jax_rocm7_plugin-${JAX_ROCM_VER}-cp311-cp311-manylinux_2_28_x86_64.whl" && \
+    python3 -m pip install --no-cache-dir --root-user-action=ignore --break-system-packages \
+        "https://github.com/ROCm/jax/releases/download/${ROCM_JAX_TAG}/jaxlib-${JAX_ROCM_VER}-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" && \
+    python3 -m pip install --no-cache-dir --root-user-action=ignore --break-system-packages \
+        "jax==${JAX_ROCM_VER}" --no-deps && \
+    PY_SITE="$(python3 -c 'import site; print(site.getsitepackages()[0])')" && \
+    mkdir -p "${PY_SITE}/rocm" && ln -sfn "${ROCM_PATH}/lib" "${PY_SITE}/rocm/lib" && \
+    python3 -m pip install --no-cache-dir --root-user-action=ignore --break-system-packages 'setuptools<82' && \
+    python3 -c "import setuptools; print('setuptools', setuptools.__version__, 'OK')" && \
+    python3 -c "import importlib.metadata as m; [print(p, m.version(p)) for p in ('jax-rocm7-pjrt','jax-rocm7-plugin','jaxlib','jax')]; print('JAX ROCm pip packages OK')"
 
 # Fix OpenMM imports in AlphaFold
 RUN find /app/alphafold -type f -name "*.py" -exec sed -i \
@@ -142,6 +144,11 @@ RUN set -eux; \
     else \
       echo "INSTALL_PYMOL=${INSTALL_PYMOL}: skipping pymol-open-source"; \
     fi
+
+# setuptools>=82 removed pkg_resources (still required by TensorFlow / AlphaFold).
+RUN python3 -m pip install --force-reinstall --no-cache-dir --root-user-action=ignore --break-system-packages \
+        'setuptools<82' \
+    && python3 -c "import setuptools; print('setuptools', setuptools.__version__, 'OK')"
 
 WORKDIR /app/alphafold
 

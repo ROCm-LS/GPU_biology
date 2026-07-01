@@ -16,6 +16,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ALPHAFOLD_HOME="${ALPHAFOLD_HOME:-/app/alphafold}"
+export PYTHONPATH="${ALPHAFOLD_HOME}${PYTHONPATH:+:${PYTHONPATH}}"
 RUN_ALPHAFOLD="${ALPHAFOLD_HOME}/run_alphafold.py"
 
 FASTA="${FASTA:-/work/inputs/10aa.fasta}"

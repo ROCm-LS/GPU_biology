@@ -99,7 +99,7 @@ python3 /path/to/GPU_biology/scripts/split_and_fold_segments_alphafold2.py QUERY
 - **`--work-dir`**: common parent of input FASTA, chunk FASTAs, and `--af2-output-base` (default `<work-dir>/af2_predictions`).
 - **`--`**: everything after is forwarded to **`run_alphafold.py`** unchanged.
 
-Environment overrides for the docker helper scripts: see `alphafold2_docker_run.sh` / `colabfold_docker_run.sh` headers (`ALPHAFOLD2_ROCM_VERSION`, `COLABFOLD_ROCM_VERSION`, `ALPHAFOLD2_IMAGE`, `COLABFOLD_IMAGE`, `MYSCRATCH`, etc.).
+Environment overrides for the docker helper scripts: see `alphafold2_docker_run.sh` / `colabfold_docker_run.sh` headers (`ALPHAFOLD2_ROCM_VERSION`, `COLABFOLD_ROCM_VERSION`, `ALPHAFOLD2_IMAGE`, `COLABFOLD_IMAGE`, `ALPHAFOLD2_SCRIPTS_DIR`, `ALPHAFOLD2_MOUNT_SCRIPTS`, `MYSCRATCH`, etc.).
 
 ### In-container (run inside the fold image)
 

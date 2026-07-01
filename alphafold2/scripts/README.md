@@ -4,7 +4,7 @@ Scripts for an **optional** **`reduced_dbs`** workflow: avoid **Jackhmmer** over
 
 **Not in Docker images by design.** Published Pawsey AlphaFold2 / ColabFold images (and the GPU_biology app Dockerfiles) ship inference only — `run_alphafold.py`, `colabfold_batch`, params/cache mounts. They do **not** include `run_af2.sh`, `convert_colabfold_a3m_to_sto.py`, or `create_dummy_reduced_databases.sh`. You only need these when using the **minimal database + ColabFold MSA handoff** path below. For **`full_dbs`** with genetic search inside AlphaFold, call **`run_alphafold.py`** with your site’s flags and ignore this folder.
 
-Deliver helpers via **bind-mounted `/work`** (or `docker cp` / copy on the host) — see [Getting these scripts into the AlphaFold2 container](#getting-these-scripts-into-the-alphafold2-container).
+Deliver helpers via **`scripts/alphafold2_docker_run.sh`** (bind-mounts this folder at **`/work/af2_scripts`** by default) or copy on the host — see [Getting these scripts into the AlphaFold2 container](#getting-these-scripts-into-the-alphafold2-container).
 
 ## When to use this
 
@@ -47,11 +47,11 @@ Converts a **ColabFold-style `.a3m`** (e.g. from `colabfold_batch` output `…_o
 To generate that `.a3m` from FASTA **without** ColabFold structure prediction, run **`colabfold_batch … --msa-only`** (uses the public MSA API by default; writes alignments under the output directory, then exits). A second `colabfold_batch` on the same paths can fold later if you stay in ColabFold; for AlphaFold2, take the `.a3m` and convert as below.
 
 - Strips ColabFold/mmseqs comment lines (`#…`).
-- Parses with AlphaFold’s `alphafold.data.parsers` — run **inside the AlphaFold2 image** (or any env with the `alphafold` package on `PYTHONPATH`).
+- Parses with AlphaFold’s `alphafold.data.parsers` — run **inside the AlphaFold2 image** with **`PYTHONPATH=/app/alphafold`** (set by **`scripts/alphafold2_docker_run.sh`** and **`run_af2.sh`**).
 
 ```bash
-# Inside AlphaFold2 container (paths under /work are typical bind mounts)
-python3 /path/to/GPU_biology/alphafold2/scripts/convert_colabfold_a3m_to_sto.py \
+# Inside AlphaFold2 container (/work/af2_scripts when using alphafold2_docker_run.sh)
+python3 /work/af2_scripts/convert_colabfold_a3m_to_sto.py \
   /colabfold_work/run1/query_output/query.a3m \
   /work/af2_out/query/msas
 ```
@@ -88,39 +88,28 @@ bash /work/af2_scripts/run_af2.sh
 
 ### Getting these scripts into the AlphaFold2 container
 
-GPU_biology **does not `COPY` these into app images** — same as published Pawsey tags. The image already has **`/app/alphafold/run_alphafold.py`** and the **`alphafold`** package; add repo helpers only when you use the minimal-DB workflow.
+GPU_biology **does not `COPY` these into app images** — same as published Pawsey tags. The image already has **`/app/alphafold/run_alphafold.py`** and the **`alphafold`** package; mount or copy helpers only when you use the minimal-DB workflow.
+
+**Default (recommended):** **`scripts/alphafold2_docker_run.sh`** bind-mounts **`alphafold2/scripts`** at **`/work/af2_scripts`** (read-only) and sets **`PYTHONPATH=/app/alphafold`** so **`convert_colabfold_a3m_to_sto.py`** can import **`alphafold.data.parsers`**. Override with **`ALPHAFOLD2_SCRIPTS_DIR`**; set **`ALPHAFOLD2_MOUNT_SCRIPTS=0`** to skip the mount.
 
 | Approach | When to use |
 |----------|-------------|
-| **Copy on host** into `$ALPHAFOLD2_WORK_DIR/af2_scripts/` | Persistent under bind-mounted **`/work`** (recommended) |
-| **`docker cp`** | Quick local test into a running container — see below |
-| **Extra bind-mount** | Dev: `-v …/GPU_biology/alphafold2/scripts:/work/af2_scripts:ro` on `docker run` |
+| **`alphafold2_docker_run.sh`** (default) | Repo checkout: helpers at **`/work/af2_scripts`**, no copy step |
+| **Copy on host** into `$ALPHAFOLD2_WORK_DIR/af2_scripts/` | No repo mount (e.g. custom script edits under **`/work`**) — use with **`ALPHAFOLD2_MOUNT_SCRIPTS=0`** |
 
-`create_dummy_reduced_databases.sh` runs on the **host**; set **`ALPHAFOLD2_DATABASE_DIR`** to that output tree (mounted at **`/work/databases`** by **`alphafold2_docker_run.sh`**, default `${MYSCRATCH:-$HOME}/alphafold_databases`).
+`create_dummy_reduced_databases.sh` runs on the **host**; set **`ALPHAFOLD2_DATABASE_DIR`** to that output tree (mounted at **`/work/databases`** by **`alphafold2_docker_run.sh`**, default `${MYSCRATCH:-$HOME}/databases`).
 
-**`docker cp` into a running AlphaFold2 container** (after `scripts/alphafold2_docker_run.sh`):
+Quick check after starting the container:
 
 ```bash
-REPO=/path/to/GPU_biology
 CONTAINER="${ALPHAFOLD2_CONTAINER_NAME:-${USER}_alphafold2_rocm7.2.3}"
-
-docker exec "${CONTAINER}" mkdir -p /work/af2_scripts
-docker cp "${REPO}/alphafold2/scripts/run_af2.sh" \
-  "${CONTAINER}:/work/af2_scripts/run_af2.sh"
-docker cp "${REPO}/alphafold2/scripts/convert_colabfold_a3m_to_sto.py" \
-  "${CONTAINER}:/work/af2_scripts/convert_colabfold_a3m_to_sto.py"
-docker exec "${CONTAINER}" chmod +x /work/af2_scripts/run_af2.sh
-
-# quick check
 docker exec "${CONTAINER}" ls -la /work/af2_scripts
 docker exec "${CONTAINER}" python3 /work/af2_scripts/convert_colabfold_a3m_to_sto.py --help
 ```
 
-Because `/work` is bind-mounted, those files also appear on the host at **`$ALPHAFOLD2_WORK_DIR/af2_scripts/`** (default `~/alphafold_work/af2_scripts/`).
+Keep helpers in **`/work/af2_scripts/`**, not mixed into **`databases/`**. Inputs, outputs, and **`create_dummy_reduced_databases.sh`** output stay at **`/work/inputs`**, **`/work/af2_out`**, **`/work/databases`**, etc.
 
-Keep helpers in a **subdir** of `/work` (e.g. `/work/af2_scripts/`), not mixed into `databases/`. Inputs, outputs, and `create_dummy_reduced_databases.sh` output stay at `/work/inputs`, `/work/af2_out`, `/work/databases`, etc.
-
-`run_af2.sh` calls **`${ALPHAFOLD_HOME:-/app/alphafold}/run_alphafold.py`** and finds **`convert_colabfold_a3m_to_sto.py`** next to itself. You only need the **two** helper files in the same directory.
+`run_af2.sh` calls **`${ALPHAFOLD_HOME:-/app/alphafold}/run_alphafold.py`** and finds **`convert_colabfold_a3m_to_sto.py`** next to itself.
 
 Or skip `run_af2.sh` and run the converter plus `run_alphafold.py` directly:
 
