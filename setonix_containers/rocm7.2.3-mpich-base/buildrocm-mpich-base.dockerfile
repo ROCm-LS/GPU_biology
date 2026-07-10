@@ -18,8 +18,8 @@ ARG MPI4PY_VERSION="4.1.1"
 #define some metadata 
 LABEL org.opencontainers.image.created="2025-06"
 LABEL org.opencontainers.image.authors="Cristian Di Pietratonio <cristian.dipietrantonio@pawsey.org.au>, Pascal Elahi <pascal.elahi@pawsey.org.au>, Craig Meyer <cmeyer@pawsey.org.au>"
-LABEL org.opencontainers.image.documentation="https://quay.io/pawsey"
-LABEL org.opencontainers.image.source="GPU_biology vendored recipe: setonix_containers/rocm-mpich-base/"
+LABEL org.opencontainers.image.documentation="https://github.com/PawseySC/pawsey-containers/"
+LABEL org.opencontainers.image.source="https://github.com/PawseySC/pawsey-containers/mpi/mpich-base/buildmpich.dockerfile"
 LABEL org.opencontainers.image.vendor="Pawsey Supercomputing Research Centre"
 LABEL org.opencontainers.image.licenses="GNU GPL3.0"
 LABEL org.opencontainers.image.title="Setonix compatible MPICH + ROCM base"
@@ -207,7 +207,7 @@ RUN echo "Building rocm ${ROCM_VERSION}" \
     && if [ $rocm_major -ge 7 ]; then ROCM_INSTALLER_VERSION=${ROCM_VERSION}.${ROCM_INSTALLER_VERSION}; \
         else \
         ROCM_INSTALLER_VERSION=${rocm_major}.${rocm_minor}.${ROCM_INSTALLER_VERSION}; fi \
-    && mkdir -p /tmp/build && cd /tmp/build \
+    && cd /tmp/build \
     # && wget https://bootstrap.pypa.io/get-pip.py \
     # && python3 get-pip.py \
     # CMEYER: Need jammy for < rocm6.2, noble for > rocm6.2
@@ -310,4 +310,4 @@ RUN mkdir -p /opt/docker-recipes/
 COPY rocm-mpich-base/buildrocm-mpich-base.dockerfile /opt/docker-recipes/
 ENV MPICH_ROOT=/opt/mpich
 ENV PATH=${MPICH_ROOT}/bin:${PATH}
-ENV LD_LIBRARY_PATH=${MPICH_ROOT}/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=${MPICH_ROOT}/lib

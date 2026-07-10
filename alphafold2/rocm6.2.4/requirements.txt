@@ -5,7 +5,7 @@ immutabledict
 ml-collections
 numpy==1.26.4
 pandas
-setuptools
+setuptools<82
 tensorflow-cpu==2.18.1
 mock
 tabulate 

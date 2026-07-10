@@ -1,0 +1,8 @@
+# Minimal conda env only — heavy deps are in requirements-pip.txt (much faster docker builds).
+name: base
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
