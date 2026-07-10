@@ -19,7 +19,7 @@ ENV ROCM_PATH /opt/rocm-$ROCM_RELEASE
 ENV PATH $ROCM_PATH/bin:$ROCM_PATH/llvm/bin:$PATH
 ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:$ROCM_PATH/lib
 ENV JAX_PLATFORMS="rocm,cpu"
-ENV PIP_NO_CACHE_DIR=false
+ENV PIP_NO_CACHE_DIR=true
 
 # Install miniforge (mamba)
 RUN set -eux ; \
@@ -51,3 +51,4 @@ ENV XLA_PYTHON_CLIENT_MEM_FRACTION="4.0"
 ENV XLA_PYTHON_CLIENT_ALLOCATOR="platform"
 ENV TF_FORCE_GPU_ALLOW_GROWTH="true"
 ENV TF_FORCE_UNIFIED_MEMORY="0"
+ENV XLA_FLAGS='--xla_gpu_enable_command_buffer= --xla_gpu_autotune_level=0'
