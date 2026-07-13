@@ -18,63 +18,13 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 from split_fold_stitch.jax_rocm_env import jax_xla_env_for_fold_subprocess
+from rocm_compute_devices import resolve_orchestrator_gpu_ids
 
 # Tie-breaks for pLDDT (primary) vs RMSD (secondary) window selection
 _PDDT_TIE: float = 1e-4
 _RMSD_TIE: float = 1e-6
 
-def _parse_hip_visible_devices() -> list[int]:
-    """
-    Comma-separated integers, e.g. 0,1,2. Invalid tokens are skipped; empty
-    or whitespace-only value yields [].
-    """
-    raw = os.environ.get("HIP_VISIBLE_DEVICES", "")
-    if not raw.strip():
-        return []
-    out: list[int] = []
-    for part in raw.split(","):
-        p = part.strip()
-        if not p:
-            continue
-        try:
-            out.append(int(p))
-        except ValueError:
-            pass
-    return out
-
-def _discover_gpu_ids() -> list[int]:
-    """All GPUs: count of GUID lines in `rocm-smi -i` (no HIP set in the parent)."""
-    try:
-        out = subprocess.check_output(
-            "rocm-smi -i|grep GUID|wc -l",
-            shell=True,
-            text=True,
-            stderr=subprocess.STDOUT,
-            timeout=30,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return [0]
-    try:
-        n = int(out.strip())
-    except ValueError:
-        return [0]
-    if n > 0:
-        return list(range(n))
-    return [0]
-
-def _init_gpu_ids() -> list[int]:
-    if "HIP_VISIBLE_DEVICES" in os.environ:
-        return _parse_hip_visible_devices()
-    return _discover_gpu_ids()
-
-# Honor HIP in the parent environment; else enumerate devices via rocm-smi; else a single GCD
-GPU_IDS = _init_gpu_ids()
-if not GPU_IDS:
-    print(
-        "Warning: no GPU indices (empty HIP_VISIBLE_DEVICES?); using [0].",
-        file=sys.stderr,
-    )
-    GPU_IDS = [0]
+GPU_IDS = resolve_orchestrator_gpu_ids()
 
 # Tiling: max ~3000 aa per ColabFold run, 1000 aa overlap so consecutive windows share
 # the same stretch (1-based: 1–3000 and 2001–5005 for 5005 aa, overlap 2001–3000).

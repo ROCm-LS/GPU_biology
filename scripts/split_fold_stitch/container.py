@@ -11,6 +11,9 @@ import sys
 from dataclasses import dataclass, field
 from typing import Sequence
 
+from rocm_compute_devices import require_rocm_gpu_visible
+
+from split_fold_stitch.jax_rocm_env import alphafold_fold_jax_env, colabfold_batch_jax_env
 
 CONTAINER_WORK_MOUNT = "/work"
 CACHE_CONTAINER_MOUNT = "/cache"
@@ -42,6 +45,8 @@ class ContainerConfig:
     singularity_rocm: bool = True
     docker_gpu_devices: bool = True
     pymol_command: str = "pymol"
+    # Host orchestrators (split_and_fold_segments_*.py) never run fold tools on the host.
+    container_only: bool = False
 
 
 def resolve_work_dir(work_dir: str | None, *paths: str) -> str:
@@ -193,10 +198,10 @@ class ContainerRunner:
             fasta_arg,
             out_arg,
         ]
+        image_hint = self.config.colabfold_sif or self.config.colabfold_image or ""
         env = {
             "HIP_VISIBLE_DEVICES": str(gpu_id),
-            "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-            "XLA_FLAGS": "--xla_gpu_autotune_level=0",
+            **colabfold_batch_jax_env(image_hints=image_hint),
             **self._cache_env(for_container=in_container),
         }
         return self._run_colabfold_inner(inner_cmd, env)
@@ -240,7 +245,7 @@ class ContainerRunner:
 
         if runtime in ("singularity", "apptainer"):
             exe = runtime if shutil.which(runtime) else "apptainer"
-            sif = self.config.colabfold_sif or self.config.colabfold_image
+            sif = _first_existing_sif(self.config.colabfold_sif) or self.config.colabfold_image
             if not sif or not os.path.isfile(sif):
                 raise FileNotFoundError(
                     f"ColabFold Singularity image not found: {sif!r}. "
@@ -299,10 +304,10 @@ class ContainerRunner:
                 f"--output_dir={out_base_arg}",
                 *extra_args,
             ]
+        af2_hint = self.config.alphafold2_sif or self.config.alphafold2_image or ""
         env = {
             "HIP_VISIBLE_DEVICES": str(gpu_id),
-            "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-            "XLA_FLAGS": "--xla_gpu_autotune_level=0",
+            **alphafold_fold_jax_env(image_hints=af2_hint),
         }
         return self._run_alphafold_inner(inner_cmd, env)
 
@@ -350,7 +355,7 @@ class ContainerRunner:
 
         if runtime in ("singularity", "apptainer"):
             exe = runtime if shutil.which(runtime) else "apptainer"
-            sif = self.config.alphafold2_sif or self.config.alphafold2_image
+            sif = _first_existing_sif(self.config.alphafold2_sif) or self.config.alphafold2_image
             if not sif or not os.path.isfile(sif):
                 raise FileNotFoundError(
                     f"AlphaFold2 Singularity image not found: {sif!r}. "
@@ -432,12 +437,7 @@ class ContainerRunner:
 
         if runtime in ("singularity", "apptainer"):
             exe = runtime if shutil.which(runtime) else "apptainer"
-            sif = self.config.pymol_sif or self.config.pymol_image
-            if not sif or not os.path.isfile(sif):
-                raise FileNotFoundError(
-                    f"PyMOL Singularity image not found: {sif!r}. "
-                    "Pass --pymol-sif /path/to/pymol.sif"
-                )
+            sif = _resolve_pymol_sif(self.config)
             cmd = [
                 exe,
                 "exec",
@@ -471,21 +471,197 @@ class ContainerRunner:
         return bool(pred_dirs)
 
 
+def _singularity_exe() -> str | None:
+    for name in ("singularity", "apptainer"):
+        path = shutil.which(name)
+        if path:
+            return name
+    return None
+
+
+def _fail_pymol_sif_not_found(pymol_sif: str | None, *, pymol_image: str) -> None:
+    hint = pymol_sif or pymol_image
+    raise SystemExit(
+        "PyMOL Singularity image (.sif) is required for stitching but was not found.\n"
+        f"  Got: {hint!r}\n"
+        f"  (--pymol-image {pymol_image!r} is a Docker tag; Singularity needs a host .sif file.)\n"
+        "On Setonix:\n"
+        "  --pymol-sif /path/to/pymol.sif\n"
+        "  or: export PYMOL_SIF=/path/to/pymol.sif\n"
+        "\n"
+        "PyMOL is only used after folding when stitching multiple segments "
+        "(skipped for a single segment within the length limit)."
+    )
+
+
+def _resolve_pymol_sif(cfg: ContainerConfig) -> str:
+    sif = cfg.pymol_sif
+    if sif and os.path.isfile(sif):
+        return sif
+    _fail_pymol_sif_not_found(sif, pymol_image=cfg.pymol_image)
+
+
+def _fail_singularity_not_in_path(runtime: str = "singularity") -> None:
+    raise SystemExit(
+        f"--runtime {runtime} requires singularity or apptainer on PATH, but neither was found.\n"
+        "Load the Singularity module first, then re-run, e.g. on Setonix:\n"
+        "  module load singularity/4.1.0-slurm\n"
+        "  python3 scripts/split_and_fold_segments_colabfold.py QUERY.fa \\\n"
+        "    --runtime singularity \\\n"
+        "    --colabfold-sif /path/to/colabfold.sif \\\n"
+        "    --pymol-sif /path/to/pymol.sif \\\n"
+        "    --work-dir $PWD"
+    )
+
+
 def detect_default_runtime() -> str:
+    """Pick container orchestration backend when ``--runtime`` is omitted."""
+    if _singularity_exe():
+        return "singularity"
     if shutil.which("docker"):
         return "docker"
-    if shutil.which("apptainer") or shutil.which("singularity"):
-        return "singularity"
-    return "local"
+    _fail_singularity_not_in_path()
 
 
-def add_container_cli_args(parser) -> None:
+def _fold_container_sif_hint(args) -> str | None:
+    for attr in ("colabfold_sif", "alphafold2_sif"):
+        val = getattr(args, attr, None)
+        if val:
+            return val
+    for key in ("COLABFOLD_SIF", "ALPHAFOLD2_SIF"):
+        val = os.environ.get(key)
+        if val:
+            return val
+    return None
+
+
+def _fail_container_only_local() -> None:
+    raise SystemExit(
+        "This host orchestrator runs colabfold_batch / run_alphafold.py inside a "
+        "container only (never on the host Python environment).\n"
+        "On Setonix:\n"
+        "  module load singularity/4.1.0-slurm\n"
+        "  python3 scripts/split_and_fold_segments_colabfold.py QUERY.fa \\\n"
+        "    --runtime singularity \\\n"
+        "    --colabfold-sif /path/to/colabfold.sif \\\n"
+        "    --pymol-sif /path/to/pymol.sif \\\n"
+        "    --work-dir $PWD"
+    )
+
+
+def resolve_runtime_from_args(args, *, container_only: bool = False) -> str:
+    """Resolve ``--runtime`` with env defaults and .sif hints."""
+    explicit = getattr(args, "runtime", None)
+    if explicit is not None:
+        runtime = explicit
+    elif _fold_container_sif_hint(args):
+        runtime = "singularity"
+    else:
+        runtime = os.environ.get("SPLIT_FOLD_RUNTIME") or detect_default_runtime()
+
+    if container_only and runtime == "local":
+        _fail_container_only_local()
+
+    if runtime == "local" and explicit != "local":
+        raise SystemExit(
+            "Refusing to run colabfold_batch on the host (colabfold_batch is on PATH).\n"
+            "This host orchestrator must use a container. On Setonix:\n"
+            "  module load singularity/4.1.0-slurm\n"
+            "  python3 scripts/split_and_fold_segments_colabfold.py QUERY.fa \\\n"
+            "    --runtime singularity \\\n"
+            "    --colabfold-sif /path/to/colabfold.sif \\\n"
+            "    --pymol-sif /path/to/pymol.sif \\\n"
+            "    --work-dir $PWD"
+        )
+
+    if runtime in ("singularity", "apptainer") and not _singularity_exe():
+        _fail_singularity_not_in_path(runtime)
+    return runtime
+
+
+def _abs_sif_path(path: str | None) -> str | None:
+    if not path:
+        return None
+    return os.path.abspath(path)
+
+
+def _first_existing_sif(*paths: str | None) -> str | None:
+    """Return the first path that exists as a file (checks all, uses abspath)."""
+    for p in paths:
+        if not p:
+            continue
+        ap = os.path.abspath(p)
+        if os.path.isfile(ap):
+            return ap
+    return None
+
+
+def _fail_fold_sif_not_found(
+    cfg: ContainerConfig, *, runtime: str
+) -> None:
+    tried: list[str] = []
+    for label, p in (
+        ("--alphafold2-sif", cfg.alphafold2_sif),
+        ("--colabfold-sif", cfg.colabfold_sif),
+        ("ALPHAFOLD2_SIF", os.environ.get("ALPHAFOLD2_SIF")),
+        ("COLABFOLD_SIF", os.environ.get("COLABFOLD_SIF")),
+    ):
+        if p:
+            tried.append(f"  {label}: {os.path.abspath(p)}")
+    detail = "\n".join(tried) if tried else "  (no .sif path provided)"
+    raise SystemExit(
+        f"--runtime {runtime} requires a fold container image (.sif) that exists on disk.\n"
+        "Pass --alphafold2-sif /path/to/alphafold2.sif (AlphaFold2) or "
+        "--colabfold-sif /path/to/colabfold.sif (ColabFold).\n"
+        f"Checked:\n{detail}"
+    )
+
+
+def validate_runtime_config(cfg: ContainerConfig) -> None:
+    """Fail fast with actionable errors for common host/container misconfiguration."""
+    runtime = cfg.runtime.lower()
+    if cfg.container_only and runtime == "local":
+        _fail_container_only_local()
+    if runtime in ("docker", "singularity", "apptainer"):
+        require_rocm_gpu_visible(context="ColabFold/AlphaFold2")
+    if runtime == "local" and not shutil.which("colabfold_batch"):
+        raise SystemExit(
+            "colabfold_batch is not on PATH and --runtime=local was selected.\n"
+            "Run ColabFold inside a container instead, e.g.:\n"
+            "  module load singularity/4.1.0-slurm   # Setonix\n"
+            "  python3 scripts/split_and_fold_segments_colabfold.py QUERY.fa \\\n"
+            "    --runtime singularity \\\n"
+            "    --colabfold-sif /path/to/colabfold.sif \\\n"
+            "    --pymol-sif /path/to/pymol.sif \\\n"
+            "    --work-dir $PWD"
+        )
+    if runtime in ("singularity", "apptainer") and not _singularity_exe():
+        _fail_singularity_not_in_path(runtime)
+    if runtime in ("singularity", "apptainer"):
+        if not _first_existing_sif(cfg.alphafold2_sif, cfg.colabfold_sif):
+            _fail_fold_sif_not_found(cfg, runtime=runtime)
+
+
+def add_container_cli_args(parser, *, container_only: bool = False) -> None:
     g = parser.add_argument_group("container orchestration")
+    runtime_choices = (
+        ("docker", "singularity", "apptainer")
+        if container_only
+        else ("docker", "singularity", "apptainer", "local")
+    )
     g.add_argument(
         "--runtime",
-        choices=("docker", "singularity", "apptainer", "local"),
-        default=os.environ.get("SPLIT_FOLD_RUNTIME") or detect_default_runtime(),
-        help="how to run ColabFold and PyMOL (default: docker if available, else singularity, else local)",
+        choices=runtime_choices,
+        default=None,
+        help=(
+            "how to run ColabFold and PyMOL (default: singularity if in PATH, else docker). "
+            + (
+                "Host orchestrators always use a container."
+                if container_only
+                else "Use --runtime local only to run colabfold_batch on the host. "
+            )
+            + "Override with SPLIT_FOLD_RUNTIME."
+        ),
     )
     g.add_argument(
         "--work-dir",
@@ -510,7 +686,11 @@ def add_container_cli_args(parser) -> None:
     g.add_argument(
         "--pymol-sif",
         default=os.environ.get("PYMOL_SIF"),
-        help="Singularity/Apptainer image for PyMOL",
+        help=(
+            "Singularity/Apptainer .sif for PyMOL (required for --runtime singularity when "
+            "stitching multi-segment outputs; not used with Docker --pymol-image). "
+            "Also: PYMOL_SIF env var."
+        ),
     )
     g.add_argument(
         "--colabfold-cache",
@@ -568,10 +748,14 @@ def add_alphafold2_container_cli_args(parser) -> None:
     )
 
 
-def container_config_from_args(args, work_dir: str) -> ContainerConfig:
+def container_config_from_args(
+    args, work_dir: str, *, container_only: bool = False
+) -> ContainerConfig:
+    runtime = resolve_runtime_from_args(args, container_only=container_only)
     cfg = ContainerConfig(
-        runtime=args.runtime,
+        runtime=runtime,
         work_dir=work_dir,
+        container_only=container_only,
         colabfold_image=args.colabfold_image,
         pymol_image=args.pymol_image,
         colabfold_sif=args.colabfold_sif,
@@ -584,7 +768,10 @@ def container_config_from_args(args, work_dir: str) -> ContainerConfig:
     )
     if hasattr(args, "alphafold2_image"):
         cfg.alphafold2_image = args.alphafold2_image
-        cfg.alphafold2_sif = args.alphafold2_sif
+        cfg.alphafold2_sif = _abs_sif_path(args.alphafold2_sif)
         cfg.alphafold2_container_name = args.alphafold2_container_name
         cfg.alphafold2_app_root = args.alphafold2_app_root
+    cfg.colabfold_sif = _abs_sif_path(cfg.colabfold_sif)
+    cfg.pymol_sif = _abs_sif_path(cfg.pymol_sif)
+    validate_runtime_config(cfg)
     return cfg

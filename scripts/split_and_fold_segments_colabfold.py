@@ -4,24 +4,27 @@ ColabFold split-fold-stitch (host orchestrator). For AlphaFold2 use ``split_and_
 
 Split a long FASTA/A3M, fold segments with ColabFold, stitch with PyMOL.
 
-Runs from the **host** and orchestrates separate container backends:
+Runs from the **host** and always invokes **ColabFold inside a container** (Docker or
+Singularity). It does not run ``colabfold_batch`` on the host Python environment.
 
   - ColabFold: ``quay.io/pawsey/colabfold:rocm6.2.4`` (Docker) or a .sif (Singularity)
   - PyMOL: ``jysgro/pymol:deb12-2.5.0_sc`` (Docker) or a .sif (Singularity)
 
-Example (Docker, default):
+Example (Singularity on HPC / Setonix):
 
-  python scripts/split_and_fold_segments_colabfold.py query.fa \\
-    --work-dir /home/me/colabfold_work \\
-    --colabfold-cache /home/me/colabfold_cache
-
-Example (Singularity on HPC):
-
+  module load singularity/4.1.0-slurm
   python scripts/split_and_fold_segments_colabfold.py query.fa \\
     --runtime singularity \\
     --colabfold-sif /path/to/colabfold_rocm6.2.4.sif \\
     --pymol-sif /path/to/pymol.sif \\
     --work-dir $PWD
+
+Example (Docker):
+
+  python scripts/split_and_fold_segments_colabfold.py query.fa \\
+    --runtime docker \\
+    --work-dir /home/me/colabfold_work \\
+    --colabfold-cache /home/me/colabfold_cache
 
 Re-stitch only (fold outputs already present):
 
@@ -39,7 +42,7 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from rocm_compute_devices import discover_compute_rocm_gpu_ids
+from rocm_compute_devices import resolve_orchestrator_gpu_ids
 from split_fold_stitch.container import (
     ContainerConfig,
     ContainerRunner,
@@ -54,39 +57,7 @@ from split_fold_stitch.tiling import (
 )
 
 
-def _parse_hip_visible_devices() -> list[int]:
-    raw = os.environ.get("HIP_VISIBLE_DEVICES", "")
-    if not raw.strip():
-        return []
-    out: list[int] = []
-    for part in raw.split(","):
-        p = part.strip()
-        if not p:
-            continue
-        try:
-            out.append(int(p))
-        except ValueError:
-            pass
-    return out
-
-
-def _discover_gpu_ids() -> list[int]:
-    return discover_compute_rocm_gpu_ids()
-
-
-def _init_gpu_ids() -> list[int]:
-    if "HIP_VISIBLE_DEVICES" in os.environ:
-        return _parse_hip_visible_devices()
-    return _discover_gpu_ids()
-
-
-GPU_IDS = _init_gpu_ids()
-if not GPU_IDS:
-    print(
-        "Warning: no GPU indices (empty HIP_VISIBLE_DEVICES?); using [0].",
-        file=sys.stderr,
-    )
-    GPU_IDS = [0]
+GPU_IDS = resolve_orchestrator_gpu_ids()
 
 
 def _run_one_colabfold_chunk(
@@ -421,7 +392,7 @@ if __name__ == "__main__":
             "overlap is chosen automatically and may be < 1000 aa."
         ),
     )
-    add_container_cli_args(p)
+    add_container_cli_args(p, container_only=True)
 
     try:
         i = sys.argv.index("--", 1)
@@ -434,7 +405,7 @@ if __name__ == "__main__":
     a = p.parse_args()
     seq_input = os.path.abspath(a.input)
     work_dir = resolve_work_dir(a.work_dir, seq_input)
-    cfg = container_config_from_args(a, work_dir)
+    cfg = container_config_from_args(a, work_dir, container_only=True)
     runner = ContainerRunner(cfg)
 
     print(

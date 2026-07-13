@@ -119,9 +119,12 @@ On **ROCm 7.2.3**, that script alone adds JAX/XLA settings (including `--xla_gpu
 ### AlphaFold2 + PyMOL (one image)
 
 ```text
-python3 /path/to/GPU_biology/scripts/split_and_fold_segments_alphafold2_single_container.py QUERY.fa \
+python3 /gpu_biology/scripts/split_and_fold_segments_alphafold2_single_container.py QUERY.fa \
   --output-dir-base /work/run1 --data-dir /work/databases \
   -- --model_preset=monomer …
 ```
+
+``alphafold2_docker_run.sh`` bind-mounts the full repo read-only at ``/gpu_biology``
+(``alphafold2/scripts`` is also available at ``/work/af2_scripts``).
 
 **A3M / A2M input** (e.g. MSAs from ColabFold): same script; it converts each chunk’s alignment via **`alphafold2/scripts/convert_colabfold_a3m_to_sto.py`** and runs with **`--use_precomputed_msas=true`** by default. See **`alphafold2/scripts/README.md`**.

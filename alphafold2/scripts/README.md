@@ -4,7 +4,7 @@ Scripts for an **optional** **`reduced_dbs`** workflow: avoid **Jackhmmer** over
 
 **Not in Docker images by design.** Published Pawsey AlphaFold2 / ColabFold images (and the GPU_biology app Dockerfiles) ship inference only — `run_alphafold.py`, `colabfold_batch`, params/cache mounts. They do **not** include `run_af2.sh`, `convert_colabfold_a3m_to_sto.py`, or `create_dummy_reduced_databases.sh`. You only need these when using the **minimal database + ColabFold MSA handoff** path below. For **`full_dbs`** with genetic search inside AlphaFold, call **`run_alphafold.py`** with your site’s flags and ignore this folder.
 
-Deliver helpers via **`scripts/alphafold2_docker_run.sh`** (bind-mounts this folder at **`/work/af2_scripts`** by default) or copy on the host — see [Getting these scripts into the AlphaFold2 container](#getting-these-scripts-into-the-alphafold2-container).
+Deliver helpers via **`scripts/alphafold2_docker_run.sh`** (bind-mounts the repo at **`/gpu_biology`**, read-only; legacy alias **`/work/af2_scripts`** for this folder) or copy on the host — see [Getting these scripts into the AlphaFold2 container](#getting-these-scripts-into-the-alphafold2-container).
 
 ## When to use this
 
@@ -50,8 +50,8 @@ To generate that `.a3m` from FASTA **without** ColabFold structure prediction, r
 - Parses with AlphaFold’s `alphafold.data.parsers` — run **inside the AlphaFold2 image** with **`PYTHONPATH=/app/alphafold`** (set by **`scripts/alphafold2_docker_run.sh`** and **`run_af2.sh`**).
 
 ```bash
-# Inside AlphaFold2 container (/work/af2_scripts when using alphafold2_docker_run.sh)
-python3 /work/af2_scripts/convert_colabfold_a3m_to_sto.py \
+# Inside AlphaFold2 container (/gpu_biology/alphafold2/scripts when using alphafold2_docker_run.sh)
+python3 /gpu_biology/alphafold2/scripts/convert_colabfold_a3m_to_sto.py \
   /colabfold_work/run1/query_output/query.a3m \
   /work/af2_out/query/msas
 ```
@@ -90,11 +90,11 @@ bash /work/af2_scripts/run_af2.sh
 
 GPU_biology **does not `COPY` these into app images** — same as published Pawsey tags. The image already has **`/app/alphafold/run_alphafold.py`** and the **`alphafold`** package; mount or copy helpers only when you use the minimal-DB workflow.
 
-**Default (recommended):** **`scripts/alphafold2_docker_run.sh`** bind-mounts **`alphafold2/scripts`** at **`/work/af2_scripts`** (read-only) and sets **`PYTHONPATH=/app/alphafold`** so **`convert_colabfold_a3m_to_sto.py`** can import **`alphafold.data.parsers`**. Override with **`ALPHAFOLD2_SCRIPTS_DIR`**; set **`ALPHAFOLD2_MOUNT_SCRIPTS=0`** to skip the mount.
+**Default (recommended):** **`scripts/alphafold2_docker_run.sh`** bind-mounts the **GPU_biology** checkout at **`/gpu_biology`** (read-only; legacy alias **`/work/af2_scripts`** for this folder) and sets **`PYTHONPATH=/app/alphafold`**, **`GPU_BIOLOGY_REPO=/gpu_biology`**, and **`ALPHAFOLD2_SCRIPTS_DIR=/gpu_biology/alphafold2/scripts`**. Override with **`GPU_BIOLOGY_REPO_DIR`**; set **`GPU_BIOLOGY_MOUNT_REPO=0`** to skip the mount.
 
 | Approach | When to use |
 |----------|-------------|
-| **`alphafold2_docker_run.sh`** (default) | Repo checkout: helpers at **`/work/af2_scripts`**, no copy step |
+| **`alphafold2_docker_run.sh`** (default) | Repo at **`/gpu_biology`** (ro); pipeline **`/gpu_biology/scripts`**; helpers **`/gpu_biology/alphafold2/scripts`** (alias **`/work/af2_scripts`**) |
 | **Copy on host** into `$ALPHAFOLD2_WORK_DIR/af2_scripts/` | No repo mount (e.g. custom script edits under **`/work`**) — use with **`ALPHAFOLD2_MOUNT_SCRIPTS=0`** |
 
 `create_dummy_reduced_databases.sh` runs on the **host**; set **`ALPHAFOLD2_DATABASE_DIR`** to that output tree (mounted at **`/work/databases`** by **`alphafold2_docker_run.sh`**, default `${MYSCRATCH:-$HOME}/databases`).

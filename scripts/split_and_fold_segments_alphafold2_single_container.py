@@ -28,10 +28,17 @@ logic vs the dual-container host scripts is intentional (standalone).
 Requires: PyMOL Python API, AlphaFold deps, hhsearch/jackhmmer on PATH when not using
 precomputed MSAs.
 
-Example:
-  python3 split_and_fold_segments_alphafold2_single_container.py query.fa \\
-    --output-dir-base /work/af2_chunks/run1 --data-dir /work/databases \\
-    -- --use_precomputed_msas=true
+Example (inside AlphaFold2 container; ``run_alphafold.py`` is at ``/app/alphafold/``,
+not next to this script)::
+
+  python3 /gpu_biology/scripts/split_and_fold_segments_alphafold2_single_container.py query.fa \\
+    --output-dir-base /work/af2_chunks --data-dir /work/databases \\
+    --colabfold-a3m /colabfold_work/run1/query_output/query.a3m
+
+Tiled runs with ``--use_precomputed_msas`` need per-chunk ``.sto`` files under
+``<output-dir-base>/<chunk_fasta_stem>/msas/``. FASTA input does **not** reuse an
+existing ``msas/`` tree automatically — pass ``--colabfold-a3m`` (or use A3M input)
+so each segment's MSA is column-sliced and converted before ``run_alphafold.py``.
 
 Tokens after a bare ``--`` are forwarded to ``run_alphafold.py``.
 """
@@ -43,13 +50,20 @@ import collections
 import glob
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pymol import cmd, stored
 
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
 from alphafold.data import parsers as af_parsers
+from split_fold_stitch.af2_args import parse_flags, resolve_run_alphafold_extra
+from rocm_compute_devices import resolve_orchestrator_gpu_ids
 
 # -----------------------------------------------------------------------------
 # Tie-breaks for pLDDT (primary) vs RMSD (secondary) window selection
@@ -65,59 +79,52 @@ MIN_OVERLAP = OVERLAP
 JUNCTION_ALIGN_W = 200
 ANCHOR_SLIDE = 50
 
-
-def _parse_hip_visible_devices() -> list[int]:
-  raw = os.environ.get('HIP_VISIBLE_DEVICES', '')
-  if not raw.strip():
-    return []
-  out: list[int] = []
-  for part in raw.split(','):
-    p = part.strip()
-    if not p:
-      continue
-    try:
-      out.append(int(p))
-    except ValueError:
-      pass
-  return out
+_PRECOMPUTED_STO_NAMES = (
+    'uniref90_hits.sto',
+    'mgnify_hits.sto',
+    'small_bfd_hits.sto',
+)
 
 
-def _discover_gpu_ids() -> list[int]:
-  try:
-    out = subprocess.check_output(
-        'rocm-smi -i|grep GUID|wc -l',
-        shell=True,
-        text=True,
-        stderr=subprocess.STDOUT,
-        timeout=30,
-    )
-  except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-    return [0]
-  try:
-    n = int(out.strip())
-  except ValueError:
-    return [0]
-  if n > 0:
-    return list(range(n))
-  return [0]
-
-
-def _init_gpu_ids() -> list[int]:
-  if 'HIP_VISIBLE_DEVICES' in os.environ:
-    return _parse_hip_visible_devices()
-  return _discover_gpu_ids()
-
-
-GPU_IDS = _init_gpu_ids()
-if not GPU_IDS:
-  print(
-      'Warning: no GPU indices (empty HIP_VISIBLE_DEVICES?); using [0].',
-      file=sys.stderr,
-  )
-  GPU_IDS = [0]
+GPU_IDS = resolve_orchestrator_gpu_ids()
 
 SCRIPT_PATH = pathlib.Path(__file__).resolve()
-REPO_ROOT = SCRIPT_PATH.parent
+
+
+def _resolve_alphafold_home() -> pathlib.Path:
+  """AlphaFold install root (``run_alphafold.py`` lives here, not beside this script)."""
+  for key in ('ALPHAFOLD2_APP_ROOT', 'ALPHAFOLD_HOME'):
+    val = os.environ.get(key)
+    if val:
+      return pathlib.Path(val).resolve()
+  return pathlib.Path('/app/alphafold')
+
+
+def _resolve_convert_a3m_script() -> pathlib.Path:
+  """Path to ``convert_colabfold_a3m_to_sto.py`` (under ``alphafold2/scripts`` in the repo)."""
+  env = os.environ.get('ALPHAFOLD2_SCRIPTS_DIR')
+  if env:
+    candidate = pathlib.Path(env) / 'convert_colabfold_a3m_to_sto.py'
+    if candidate.is_file():
+      return candidate.resolve()
+  for candidate in (
+      pathlib.Path('/gpu_biology/alphafold2/scripts/convert_colabfold_a3m_to_sto.py'),
+      pathlib.Path('/work/gpu_biology/alphafold2/scripts/convert_colabfold_a3m_to_sto.py'),
+      pathlib.Path('/work/af2_scripts/convert_colabfold_a3m_to_sto.py'),
+      SCRIPT_PATH.parent.parent / 'alphafold2/scripts/convert_colabfold_a3m_to_sto.py',
+      SCRIPT_PATH.parent / 'convert_colabfold_a3m_to_sto.py',
+  ):
+    if candidate.is_file():
+      return candidate.resolve()
+  raise FileNotFoundError(
+      'convert_colabfold_a3m_to_sto.py not found. Mount the repo at /gpu_biology '
+      '(default with alphafold2_docker_run.sh), set ALPHAFOLD2_SCRIPTS_DIR, '
+      'or copy the converter into the container.'
+  )
+
+
+ALPHAFOLD_HOME = _resolve_alphafold_home()
+RUN_ALPHAFOLD_PY = ALPHAFOLD_HOME / 'run_alphafold.py'
 
 
 def _tiling_window_overlap(max_chunk_aa: int) -> tuple[int, int]:
@@ -343,6 +350,57 @@ def print_chunk_plan(chunks: list[tuple[int, int]]) -> None:
 def alphafold_prediction_dir(output_dir_base: str, fasta_path: str) -> str:
   stem = pathlib.Path(fasta_path).stem
   return os.path.join(output_dir_base, stem)
+
+
+def chunk_msa_dir(output_dir_base: str, chunk_stem: str) -> str:
+  return os.path.join(output_dir_base, chunk_stem, 'msas')
+
+
+def missing_precomputed_sto_files(msa_dir: str) -> list[str]:
+  return [
+      name
+      for name in _PRECOMPUTED_STO_NAMES
+      if not os.path.isfile(os.path.join(msa_dir, name))
+  ]
+
+
+def copy_precomputed_sto_dir(source_dir: str, dest_msa_dir: str) -> None:
+  source = os.path.abspath(source_dir)
+  os.makedirs(dest_msa_dir, exist_ok=True)
+  missing = missing_precomputed_sto_files(source)
+  if missing:
+    raise FileNotFoundError(
+        f'MSA source {source!r} missing: {", ".join(missing)}'
+    )
+  for name in _PRECOMPUTED_STO_NAMES:
+    shutil.copy2(os.path.join(source, name), os.path.join(dest_msa_dir, name))
+
+
+def use_precomputed_msas_from_argv(argv: list[str]) -> bool:
+  flags, _ = parse_flags(argv)
+  return flags.get('use_precomputed_msas', 'true').lower() in ('true', '1', 'yes')
+
+
+def require_precomputed_msas_for_chunks(
+    output_dir_base: str,
+    chunk_fastas: list[str],
+) -> None:
+  problems: list[str] = []
+  for fp in chunk_fastas:
+    stem = pathlib.Path(fp).stem
+    msa_dir = chunk_msa_dir(output_dir_base, stem)
+    missing = missing_precomputed_sto_files(msa_dir)
+    if missing:
+      problems.append(f'  {msa_dir}: missing {", ".join(missing)}')
+  if problems:
+    raise SystemExit(
+        'Precomputed MSAs required (--use_precomputed_msas=true) but incomplete:\n'
+        + '\n'.join(problems)
+        + '\nJackhmmer would run without real genetic databases.\n'
+        'For tiled FASTA: pass --colabfold-a3m so each chunk gets sliced .sto files, '
+        'or use A3M input. Single-segment only: --msa-source-dir with the three .sto '
+        'files. Or set -- --use_precomputed_msas=false with full_dbs.'
+    )
 
 
 def alphafold_best_model_pdb(prediction_dir: str) -> str | None:
@@ -586,7 +644,7 @@ def _run_one_alphafold_chunk(
   env.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
   env.setdefault('XLA_FLAGS', '--xla_gpu_autotune_level=0')
 
-  run_py = str(REPO_ROOT / 'run_alphafold.py')
+  run_py = str(RUN_ALPHAFOLD_PY)
   cmd_list = [
       sys.executable,
       run_py,
@@ -597,7 +655,7 @@ def _run_one_alphafold_chunk(
   print(
       f'-> Chunk {i} on GCD {gpu_id}: {" ".join(cmd_list[:4])} ...'
   )
-  p = subprocess.run(cmd_list, env=env, cwd=str(REPO_ROOT), check=False)
+  p = subprocess.run(cmd_list, env=env, cwd=str(ALPHAFOLD_HOME), check=False)
   return i, p.returncode
 
 
@@ -754,30 +812,18 @@ def prepare_chunk_msas_from_a3m(
   """writes .../{stem}/msas/*.sto via convert_colabfold_a3m_to_sto.py"""
   msa_dir = os.path.join(output_dir_base, chunk_fasta_stem, 'msas')
   os.makedirs(msa_dir, exist_ok=True)
-  conv = REPO_ROOT / 'convert_colabfold_a3m_to_sto.py'
+  conv = _resolve_convert_a3m_script()
+  env = os.environ.copy()
+  env.setdefault(
+      'PYTHONPATH',
+      f'{ALPHAFOLD_HOME}{os.pathsep}{env.get("PYTHONPATH", "")}',
+  )
   subprocess.run(
       [sys.executable, str(conv), chunk_a3m_path, msa_dir],
-      cwd=str(REPO_ROOT),
+      cwd=str(conv.parent),
+      env=env,
       check=True,
   )
-
-
-def build_default_af2_args(data_dir: str) -> list[str]:
-  """Same defaults as run_af2.sh (reduced_dbs, monomer)."""
-  return [
-      '--model_preset=monomer',
-      '--db_preset=reduced_dbs',
-      '--max_template_date=1900-01-01',
-      '--use_gpu_relax=false',
-      f'--data_dir={data_dir}',
-      f'--uniref90_database_path={data_dir}/uniref90/uniref90.fasta',
-      f'--mgnify_database_path={data_dir}/mgnify/mgy_clusters_2022_05.fa',
-      f'--small_bfd_database_path={data_dir}/small_bfd/bfd-first_non_consensus_sequences.fasta',
-      f'--pdb70_database_path={data_dir}/pdb70/pdb70',
-      f'--template_mmcif_dir={data_dir}/pdb_mmcif/mmcif_files',
-      f'--obsolete_pdbs_path={data_dir}/pdb_mmcif/obsolete.dat',
-      '--use_precomputed_msas=true',
-  ]
 
 
 def main() -> None:
@@ -786,7 +832,8 @@ def main() -> None:
       formatter_class=argparse.RawDescriptionHelpFormatter,
       epilog=(
           'Pass extra run_alphafold.py flags after a lone -- . '
-          'If you omit them, defaults match run_af2.sh (reduced_dbs + precomputed MSAs).'
+          'Defaults match run_af2.sh (reduced_dbs + precomputed MSAs). '
+          'Tiled FASTA + precomputed MSAs require --colabfold-a3m (or A3M input).'
       ),
   )
   p.add_argument(
@@ -816,6 +863,24 @@ def main() -> None:
       help='Max residues per segment (default: 3012).',
   )
   p.add_argument(
+      '--colabfold-a3m',
+      default=os.environ.get('COLABFOLD_A3M'),
+      metavar='PATH',
+      help=(
+          'ColabFold .a3m for the full query (env COLABFOLD_A3M). Required for tiled '
+          'FASTA with precomputed MSAs: each chunk gets column-sliced .sto files.'
+      ),
+  )
+  p.add_argument(
+      '--msa-source-dir',
+      default=None,
+      metavar='DIR',
+      help=(
+          'Directory with uniref90_hits.sto, mgnify_hits.sto, small_bfd_hits.sto for the '
+          'full query. Single-segment runs only; copied into the chunk msas/ tree.'
+      ),
+  )
+  p.add_argument(
       '--skip-alphafold',
       action='store_true',
       help='Only plan chunks / write inputs; do not run AlphaFold (for debugging).',
@@ -834,7 +899,7 @@ def main() -> None:
   try:
     i = sys.argv.index('--', 1)
   except ValueError:
-    run_alphafold_extra: list[str] | None = None
+    run_alphafold_extra: list[str] = []
   else:
     run_alphafold_extra = sys.argv[i + 1 :]
     del sys.argv[i:]
@@ -861,11 +926,42 @@ def main() -> None:
     _header, seq = read_sequence_input(seq_input)
     total_len = len(seq)
 
+  colabfold_a3m = args.colabfold_a3m
+  if colabfold_a3m:
+    colabfold_a3m = os.path.abspath(colabfold_a3m)
+    if not os.path.isfile(colabfold_a3m):
+      raise SystemExit(f'--colabfold-a3m not found: {colabfold_a3m!r}')
+
+  msa_source_dir = args.msa_source_dir
+  if msa_source_dir:
+    msa_source_dir = os.path.abspath(msa_source_dir)
+    if not os.path.isdir(msa_source_dir):
+      raise SystemExit(f'--msa-source-dir not found: {msa_source_dir!r}')
+
+  a3m_msa_records: list[tuple[str, str]] | None = None
+  a3m_msa_n_match: int | None = None
+  if msa_in:
+    a3m_msa_records = a3m_records
+    a3m_msa_n_match = a3m_n_match
+  elif colabfold_a3m:
+    a3m_msa_records = parse_a3m_file(colabfold_a3m)
+    a3m_msa_n_match = a3m_match_state_count_with_check(a3m_msa_records)
+    if a3m_msa_n_match != len(seq):
+      raise SystemExit(
+          f'FASTA length ({len(seq)}) != ColabFold A3M match columns '
+          f'({a3m_msa_n_match}); use matching query/Msa files.'
+      )
+
   mca = args.max_chunk_aa if args.max_chunk_aa is not None else MAX_CHUNK_AA
   if mca < ANCHOR_SLIDE * 2:
     raise SystemExit(f'--max-chunk-aa ({mca}) too small; use at least ~{ANCHOR_SLIDE * 2}.')
 
   chunks = get_chunks(total_len, max_chunk_aa=mca)
+  if msa_source_dir and len(chunks) > 1:
+    raise SystemExit(
+        '--msa-source-dir is for single-segment runs only. This query tiles into '
+        f'{len(chunks)} segments; pass --colabfold-a3m so MSAs are sliced per chunk.'
+    )
   _tw, tov_plan = _tiling_window_overlap(mca)
   validate_chunk_plan(
       chunks, total_len, max_chunk_aa=mca, min_adjacent_overlap=tov_plan)
@@ -878,32 +974,73 @@ def main() -> None:
   chunk_fastas: list[str] = []
   pred_dirs: list[str] = []
 
-  if run_alphafold_extra is None:
-    run_alphafold_extra = build_default_af2_args(data_dir)
+  run_alphafold_extra = resolve_run_alphafold_extra(
+      run_alphafold_extra,
+      data_dir=data_dir,
+      use_precomputed_msas=True,
+  )
+
+  use_a3m_for_chunk_msas = (
+      a3m_msa_records is not None and a3m_msa_n_match is not None
+  )
 
   if one_segment:
     stem_single = pathlib.Path(seq_input).stem
-    if msa_in and a3m_records is not None:
-      prepare_chunk_msas_from_a3m(seq_input, output_base, stem_single)
-      fasta_single = os.path.join(chunk_work, f'{stem_single}.fasta')
-      write_query_fasta_from_a3m(seq_input, fasta_single)
-      chunk_fastas = [fasta_single]
-      pred_dirs = [alphafold_prediction_dir(output_base, fasta_single)]
+    if use_a3m_for_chunk_msas:
+      a3m_src = seq_input if msa_in else colabfold_a3m
+      assert a3m_src is not None
+      if msa_in:
+        prepare_chunk_msas_from_a3m(a3m_src, output_base, stem_single)
+        fasta_single = os.path.join(chunk_work, f'{stem_single}.fasta')
+        write_query_fasta_from_a3m(seq_input, fasta_single)
+      else:
+        chunk_fa = os.path.join(chunk_work, f'{stem_single}.fa')
+        with open(chunk_fa, 'w') as out:
+          out.write(f'{_header}\n{seq}\n')
+        prepare_chunk_msas_from_a3m(a3m_src, output_base, pathlib.Path(chunk_fa).stem)
+        chunk_fastas = [chunk_fa]
+        pred_dirs = [alphafold_prediction_dir(output_base, chunk_fa)]
+      if msa_in:
+        chunk_fastas = [fasta_single]
+        pred_dirs = [alphafold_prediction_dir(output_base, fasta_single)]
+    elif msa_source_dir:
+      chunk_fa = seq_input
+      stem = pathlib.Path(chunk_fa).stem
+      copy_precomputed_sto_dir(
+          msa_source_dir, chunk_msa_dir(output_base, stem)
+      )
+      chunk_fastas = [chunk_fa]
+      pred_dirs = [alphafold_prediction_dir(output_base, chunk_fa)]
     else:
       chunk_fastas = [seq_input]
       pred_dirs = [alphafold_prediction_dir(output_base, seq_input)]
   else:
     for i, (s, e) in enumerate(chunks):
       stem = chunk_stem(os.path.basename(base), i, s, e)
-      fn = os.path.join(chunk_work, f'{stem}{ext}')
-      if msa_in and a3m_records is not None and a3m_n_match is not None:
-        write_a3m_match_slice(a3m_records, s, e, a3m_n_match, fn, part_index=i)
-        prepare_chunk_msas_from_a3m(fn, output_base, pathlib.Path(fn).stem)
-        fasta_fn = os.path.join(chunk_work, f'{stem}.fasta')
-        write_query_fasta_from_a3m(fn, fasta_fn)
+      if use_a3m_for_chunk_msas:
+        assert a3m_msa_records is not None and a3m_msa_n_match is not None
+        if msa_in:
+          fn = os.path.join(chunk_work, f'{stem}{ext}')
+          write_a3m_match_slice(
+              a3m_msa_records, s, e, a3m_msa_n_match, fn, part_index=i
+          )
+          prepare_chunk_msas_from_a3m(fn, output_base, pathlib.Path(fn).stem)
+          fasta_fn = os.path.join(chunk_work, f'{stem}.fasta')
+          write_query_fasta_from_a3m(fn, fasta_fn)
+        else:
+          fn = os.path.join(chunk_work, f'{stem}.fa')
+          with open(fn, 'w') as out:
+            out.write(f'{_header}_p{i}\n{seq[s:e]}\n')
+          a3m_fn = os.path.join(chunk_work, f'{stem}.a3m')
+          write_a3m_match_slice(
+              a3m_msa_records, s, e, a3m_msa_n_match, a3m_fn, part_index=i
+          )
+          prepare_chunk_msas_from_a3m(a3m_fn, output_base, stem)
+          fasta_fn = fn
         chunk_fastas.append(fasta_fn)
         pred_dirs.append(alphafold_prediction_dir(output_base, fasta_fn))
       else:
+        fn = os.path.join(chunk_work, f'{stem}{ext}')
         with open(fn, 'w') as out:
           out.write(f'{_header}_p{i}\n{seq[s:e]}\n')
         chunk_fastas.append(fn)
@@ -912,6 +1049,15 @@ def main() -> None:
   if args.skip_alphafold:
     print('-> --skip-alphafold: wrote chunk inputs / MSAs; exiting.')
     return
+
+  if not RUN_ALPHAFOLD_PY.is_file():
+    raise SystemExit(
+        f'run_alphafold.py not found at {RUN_ALPHAFOLD_PY}. '
+        'Set ALPHAFOLD_HOME or ALPHAFOLD2_APP_ROOT (default /app/alphafold).'
+    )
+
+  if use_precomputed_msas_from_argv(run_alphafold_extra):
+    require_precomputed_msas_for_chunks(output_base, chunk_fastas)
 
   if not one_segment:
     run_parallel_af2(chunk_fastas, output_base, run_alphafold_extra=run_alphafold_extra)
@@ -930,12 +1076,12 @@ def main() -> None:
     rc = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / 'run_alphafold.py'),
+            str(RUN_ALPHAFOLD_PY),
             f'--fasta_paths={chunk_fastas[0]}',
             f'--output_dir={output_base}',
             *run_alphafold_extra,
         ],
-        cwd=str(REPO_ROOT),
+        cwd=str(ALPHAFOLD_HOME),
         env=env,
         check=False,
     ).returncode

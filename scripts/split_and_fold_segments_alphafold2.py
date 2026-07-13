@@ -8,6 +8,8 @@ the fold container, use ``split_and_fold_segments_alphafold2_single_container.py
 
 Designed for a **standard AlphaFold2 setup**: local database tree and ``run_alphafold.py``
 flags you pass after ``--`` (e.g. ``--data_dir``, ``--model_preset``, ``--db_preset``).
+If you only pass ``--data_dir`` (or use ``--data-dir`` on this script), missing database
+path flags are filled in automatically (same layout as ``alphafold2/scripts/run_af2.sh``).
 Each run writes ``<--af2-output-base>/<fasta_stem>/ranked_*.pdb``; stitching uses those paths.
 
 **Input:** FASTA only (one query sequence). For A2M/A3M or custom MSA flows, use the
@@ -20,8 +22,12 @@ Example::
 
   python scripts/split_and_fold_segments_alphafold2.py query.fa \\
     --work-dir /data/af2_project \\
-    --alphafold2-container-name my_af2 \\
-    -- --data_dir=/work/databases --model_preset=monomer --db_preset=full_dbs
+    --data-dir /scratch/references/alphafold_feb2024/databases \\
+    --alphafold2-container-name my_af2
+
+  # Or pass only --data_dir after -- (other paths are derived automatically):
+  python scripts/split_and_fold_segments_alphafold2.py query.fa \\
+    --work-dir /data/af2_project -- --data_dir=/work/databases
 
 Forward all ``run_alphafold.py`` arguments after a bare ``--``.
 """
@@ -33,7 +39,8 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from rocm_compute_devices import discover_compute_rocm_gpu_ids
+from rocm_compute_devices import resolve_orchestrator_gpu_ids
+from split_fold_stitch.af2_args import data_dir_from_argv, ensure_singularity_host_bind, resolve_run_alphafold_extra
 from split_fold_stitch.container import (
     ContainerRunner,
     add_alphafold2_container_cli_args,
@@ -45,35 +52,7 @@ from split_fold_stitch.plan import build_plan_json, relativize_plan_paths, write
 from split_fold_stitch.tiling import prepare_chunk_inputs
 
 
-def _parse_hip_visible_devices() -> list[int]:
-    raw = os.environ.get("HIP_VISIBLE_DEVICES", "")
-    if not raw.strip():
-        return []
-    out: list[int] = []
-    for part in raw.split(","):
-        p = part.strip()
-        if not p:
-            continue
-        try:
-            out.append(int(p))
-        except ValueError:
-            pass
-    return out
-
-
-def _init_gpu_ids() -> list[int]:
-    if "HIP_VISIBLE_DEVICES" in os.environ:
-        return _parse_hip_visible_devices()
-    return discover_compute_rocm_gpu_ids()
-
-
-GPU_IDS = _init_gpu_ids()
-if not GPU_IDS:
-    print(
-        "Warning: no GPU indices (empty HIP_VISIBLE_DEVICES?); using [0].",
-        file=sys.stderr,
-    )
-    GPU_IDS = [0]
+GPU_IDS = resolve_orchestrator_gpu_ids()
 
 
 def _af2_pred_dirs(output_base: str, chunk_fastas: list[str]) -> list[str]:
@@ -342,9 +321,9 @@ if __name__ == "__main__":
             "Split FASTA, fold segments (AlphaFold2 container), stitch (PyMOL container)."
         ),
         epilog=(
-            "Required run_alphafold.py flags (after --) depend on your image; typical full-DB "
-            "run: --data_dir=/work/databases --model_preset=monomer --db_preset=full_dbs "
-            "plus database path flags as in AlphaFold2 docs."
+            "If run_alphafold.py flags after -- omit database paths, they are derived from "
+            "--data-dir (default: ALPHAFOLD_DATA_DIR or /work/databases). Override individual "
+            "paths by passing them after --. Typical full-DB run also sets --db_preset=full_dbs."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -397,7 +376,35 @@ if __name__ == "__main__":
             "Multi-chunk runs assign chunk i to GPU_IDS[(K + i) %% n_gpus]."
         ),
     )
-    add_container_cli_args(p)
+    p.add_argument(
+        "--data-dir",
+        default=os.environ.get("ALPHAFOLD_DATA_DIR", "/work/databases"),
+        metavar="DIR",
+        help=(
+            "AlphaFold database root (--data_dir). When run_alphafold.py flags after -- omit "
+            "database paths, they are derived from this tree (same layout as run_af2.sh)."
+        ),
+    )
+    p.add_argument(
+        "--db-preset",
+        choices=("full_dbs", "reduced_dbs"),
+        default="reduced_dbs",
+        help="run_alphafold.py --db_preset when not set after -- (default: reduced_dbs).",
+    )
+    p.add_argument(
+        "--use-precomputed-msas",
+        dest="use_precomputed_msas",
+        action="store_true",
+        default=None,
+        help="set --use_precomputed_msas=true (default for FASTA-only runs: false).",
+    )
+    p.add_argument(
+        "--no-use-precomputed-msas",
+        dest="use_precomputed_msas",
+        action="store_false",
+        help="set --use_precomputed_msas=false (Jackhmmer genetic search).",
+    )
+    add_container_cli_args(p, container_only=True)
     add_alphafold2_container_cli_args(p)
 
     try:
@@ -415,7 +422,22 @@ if __name__ == "__main__":
         af2_out = os.path.abspath(a.af2_output_base)
     else:
         af2_out = os.path.join(work_dir, "af2_predictions")
-    cfg = container_config_from_args(a, work_dir)
+    cfg = container_config_from_args(a, work_dir, container_only=True)
+    run_alphafold_extra = resolve_run_alphafold_extra(
+        run_alphafold_extra,
+        data_dir=a.data_dir,
+        db_preset=a.db_preset,
+        use_precomputed_msas=a.use_precomputed_msas,
+    )
+    if cfg.runtime.lower() in ("singularity", "apptainer"):
+        af2_data_dir = data_dir_from_argv(run_alphafold_extra) or os.path.abspath(a.data_dir)
+        bind = ensure_singularity_host_bind(
+            cfg.singularity_bind, af2_data_dir, work_dir
+        )
+        if bind:
+            print(
+                f"-> Singularity bind (AlphaFold databases outside --work-dir): {bind}"
+            )
     runner = ContainerRunner(cfg)
 
     print(
@@ -423,6 +445,8 @@ if __name__ == "__main__":
         f"{cfg.alphafold2_container_name or cfg.alphafold2_sif or cfg.alphafold2_image} "
         f"(app {cfg.alphafold2_app_root}) | PyMOL: {cfg.pymol_sif or cfg.pymol_image}"
     )
+    if run_alphafold_extra:
+        print(f"-> run_alphafold.py extra flags: {' '.join(run_alphafold_extra)}")
 
     main(
         seq_input,
