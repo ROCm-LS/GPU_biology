@@ -12,7 +12,7 @@ Singularity). It does not run ``colabfold_batch`` on the host Python environment
 
 Example (Singularity on HPC / Setonix):
 
-  module load singularity/4.1.0-slurm
+  module load singularity/3.11.4-nompi
   python scripts/split_and_fold_segments_colabfold.py query.fa \\
     --runtime singularity \\
     --colabfold-sif /path/to/colabfold_rocm6.2.4.sif \\

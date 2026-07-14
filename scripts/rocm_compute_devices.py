@@ -125,7 +125,7 @@ def require_rocm_gpu_visible(*, context: str = "fold") -> None:
         f"Cannot run {context} without a GPU allocation.\n"
         "On Setonix, request a GPU node and load Singularity inside that session, e.g.:\n"
         "  srun --partition=gpu --gpus=1 --cpus-per-task=8 --time=2:00:00 --pty bash\n"
-        "  module load singularity/4.1.0-slurm\n"
+        "  module load singularity/3.11.4-nompi\n"
         "  python3 scripts/split_and_fold_segments_colabfold.py QUERY.fa \\\n"
         "    --runtime singularity --colabfold-sif /path/to/colabfold.sif \\\n"
         "    --pymol-sif /path/to/pymol.sif --work-dir $PWD\n"

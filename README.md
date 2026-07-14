@@ -2,6 +2,8 @@
 
 ROCm-oriented **Dockerfiles** and small **host scripts** for structural biology tools on AMD GPUs (e.g. MI250X). This repo is meant to be shared as a **minimal, self-contained baseline**: build or pull images, bind-mount a working directory, run.
 
+**Quick start:** copy-paste commands for Setonix / Singularity are in **[QUICKSTART.md](QUICKSTART.md)** (long-sequence ColabFold and AlphaFold2 split–fold–stitch). Everything below is the full reference.
+
 ## Layout
 
 | Path | Purpose |

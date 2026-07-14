@@ -1,5 +1,7 @@
 # Scripts (`scripts/`)
 
+**TL;DR:** [QUICKSTART.md](../QUICKSTART.md) — Setonix / Singularity commands without reading this file.
+
 Run from anywhere; use absolute paths or `cd` to your project tree first.
 
 This directory has **two variants** of the long-sequence split / fold / stitch pipelines (same idea for **ColabFold** and **AlphaFold2**):
@@ -18,7 +20,7 @@ The host scripts use **`split_fold_stitch/container.py`** to wire fold and PyMOL
 
 ## Prerequisites
 
-- Docker (or Singularity/Apptainer) with ROCm GPU devices passed through as in the `*_docker_run.sh` scripts.
+- Docker (or Singularity/Apptainer) with ROCm GPU devices passed through as in the `*_docker_run.sh` scripts. On Setonix: `module load singularity/3.11.4-nompi` (see [QUICKSTART.md](../QUICKSTART.md)).
 - For **AlphaFold2**: **`/work`** for inputs/outputs; **`ALPHAFOLD2_DATABASE_DIR`** → **`/work/databases`** (`--data_dir`); **`COLABFOLD_MSA_DIR`** → **`/colabfold_work`**. See root **`README.md`** *Database setups* and **`alphafold2/scripts/README.md`**. For ColabFold **`/cache`**, see **`colabfold/rocm7.2.3/README.md`**.
 
 ## PyMOL and split / fold / stitch

@@ -505,7 +505,7 @@ def _fail_singularity_not_in_path(runtime: str = "singularity") -> None:
     raise SystemExit(
         f"--runtime {runtime} requires singularity or apptainer on PATH, but neither was found.\n"
         "Load the Singularity module first, then re-run, e.g. on Setonix:\n"
-        "  module load singularity/4.1.0-slurm\n"
+        "  module load singularity/3.11.4-nompi\n"
         "  python3 scripts/split_and_fold_segments_colabfold.py QUERY.fa \\\n"
         "    --runtime singularity \\\n"
         "    --colabfold-sif /path/to/colabfold.sif \\\n"
@@ -540,7 +540,7 @@ def _fail_container_only_local() -> None:
         "This host orchestrator runs colabfold_batch / run_alphafold.py inside a "
         "container only (never on the host Python environment).\n"
         "On Setonix:\n"
-        "  module load singularity/4.1.0-slurm\n"
+        "  module load singularity/3.11.4-nompi\n"
         "  python3 scripts/split_and_fold_segments_colabfold.py QUERY.fa \\\n"
         "    --runtime singularity \\\n"
         "    --colabfold-sif /path/to/colabfold.sif \\\n"
@@ -566,7 +566,7 @@ def resolve_runtime_from_args(args, *, container_only: bool = False) -> str:
         raise SystemExit(
             "Refusing to run colabfold_batch on the host (colabfold_batch is on PATH).\n"
             "This host orchestrator must use a container. On Setonix:\n"
-            "  module load singularity/4.1.0-slurm\n"
+            "  module load singularity/3.11.4-nompi\n"
             "  python3 scripts/split_and_fold_segments_colabfold.py QUERY.fa \\\n"
             "    --runtime singularity \\\n"
             "    --colabfold-sif /path/to/colabfold.sif \\\n"
@@ -628,7 +628,7 @@ def validate_runtime_config(cfg: ContainerConfig) -> None:
         raise SystemExit(
             "colabfold_batch is not on PATH and --runtime=local was selected.\n"
             "Run ColabFold inside a container instead, e.g.:\n"
-            "  module load singularity/4.1.0-slurm   # Setonix\n"
+            "  module load singularity/3.11.4-nompi   # Setonix\n"
             "  python3 scripts/split_and_fold_segments_colabfold.py QUERY.fa \\\n"
             "    --runtime singularity \\\n"
             "    --colabfold-sif /path/to/colabfold.sif \\\n"
