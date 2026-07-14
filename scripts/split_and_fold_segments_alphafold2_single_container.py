@@ -118,6 +118,10 @@ if not GPU_IDS:
 
 SCRIPT_PATH = pathlib.Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parent
+if str(REPO_ROOT) not in sys.path:
+  sys.path.insert(0, str(REPO_ROOT))
+
+from split_fold_stitch.tiling import plan_tiling, print_chunk_plan as print_tiling_plan
 
 
 def _tiling_window_overlap(max_chunk_aa: int) -> tuple[int, int]:
@@ -816,6 +820,15 @@ def main() -> None:
       help='Max residues per segment (default: 3012).',
   )
   p.add_argument(
+      '--plan-mode',
+      choices=('default', 'balanced'),
+      default='default',
+      help=(
+          'tiling policy: default uses fixed ~3000 aa windows; balanced shrinks the first '
+          'window when one segment would dominate the stitched model (e.g. 3013 aa).'
+      ),
+  )
+  p.add_argument(
       '--skip-alphafold',
       action='store_true',
       help='Only plan chunks / write inputs; do not run AlphaFold (for debugging).',
@@ -865,13 +878,14 @@ def main() -> None:
   if mca < ANCHOR_SLIDE * 2:
     raise SystemExit(f'--max-chunk-aa ({mca}) too small; use at least ~{ANCHOR_SLIDE * 2}.')
 
-  chunks = get_chunks(total_len, max_chunk_aa=mca)
-  _tw, tov_plan = _tiling_window_overlap(mca)
+  chunks, tw, tov, mode_used = plan_tiling(
+      total_len, max_chunk_aa=mca, plan_mode=args.plan_mode)
   validate_chunk_plan(
-      chunks, total_len, max_chunk_aa=mca, min_adjacent_overlap=tov_plan)
-  tw, tov = _tw, tov_plan
-  print_chunk_plan(chunks)
-  print(f'  (tiling: max {mca} aa per segment, window {tw} aa, overlap {tov} aa)')
+      chunks, total_len, max_chunk_aa=mca, min_adjacent_overlap=tov)
+  print_tiling_plan(chunks, plan_mode=mode_used)
+  print(
+      f'  (tiling: max {mca} aa per segment, window {tw} aa, overlap {tov} aa, '
+      f'plan mode {mode_used})')
 
   one_segment = len(chunks) == 1
 
