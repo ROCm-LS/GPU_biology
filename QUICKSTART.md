@@ -191,6 +191,7 @@ python3.11 scripts/split_and_fold_segments_alphafold2.py \
   --pymol-sif ${MYSCRATCH}/containers/pymol.sif \
   --data-dir /scratch/references/alphafold_feb2024/databases \
   --work-dir alphafold2_work_rocm6.2.4 \
+  --no-use-precomputed-msas \
   2>&1 | tee alphafold2_work_rocm6.2.4/3013aa.alphafold2.rocm6.2.4.log
 ```
 
@@ -210,6 +211,7 @@ python3.11 scripts/split_and_fold_segments_alphafold2.py \
   --pymol-sif ${MYSCRATCH}/containers/pymol.sif \
   --data-dir /scratch/references/alphafold_feb2024/databases \
   --work-dir alphafold2_work_rocm7.2.3 \
+  --no-use-precomputed-msas \
   2>&1 | tee alphafold2_work_rocm7.2.3/3013aa.alphafold2.rocm7.2.3.log
 ```
 
