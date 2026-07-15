@@ -311,8 +311,55 @@ class ContainerRunner:
         }
         return self._run_alphafold_inner(inner_cmd, env)
 
+    def _gpu_biology_repo_root(self) -> str:
+        return os.path.dirname(self._scripts_host)
+
+    def _repo_container_mount(self) -> str:
+        from split_fold_stitch.af2_msa import GPU_BIOLOGY_REPO_MOUNT
+
+        return GPU_BIOLOGY_REPO_MOUNT
+
+    def _repo_singularity_bind(self) -> str:
+        return f"{self._gpu_biology_repo_root()}:{self._repo_container_mount()}:ro"
+
+    def run_convert_colabfold_a3m_to_sto(
+        self, a3m_host: str, msa_dir_host: str
+    ) -> int:
+        """Run ``convert_colabfold_a3m_to_sto.py`` inside the AlphaFold2 container."""
+        from split_fold_stitch.af2_msa import (
+            GPU_BIOLOGY_REPO_MOUNT,
+            resolve_convert_a3m_script_host,
+        )
+
+        a3m_host = os.path.abspath(a3m_host)
+        msa_dir_host = os.path.abspath(msa_dir_host)
+        os.makedirs(msa_dir_host, exist_ok=True)
+        resolve_convert_a3m_script_host(self._scripts_host)
+
+        a3m_arg = host_to_container(a3m_host, self.work_dir)
+        msa_arg = host_to_container(msa_dir_host, self.work_dir)
+        conv = f"{GPU_BIOLOGY_REPO_MOUNT}/alphafold2/scripts/convert_colabfold_a3m_to_sto.py"
+        inner_cmd = ["python3", conv, a3m_arg, msa_arg]
+        env = {
+            "PYTHONPATH": self.config.alphafold2_app_root,
+        }
+        return self._run_alphafold_inner(
+            inner_cmd,
+            env,
+            extra_singularity_binds=[self._repo_singularity_bind()],
+            extra_docker_volumes=[
+                "-v",
+                f"{self._gpu_biology_repo_root()}:{GPU_BIOLOGY_REPO_MOUNT}:ro",
+            ],
+        )
+
     def _run_alphafold_inner(
-        self, inner_cmd: Sequence[str], env: dict[str, str]
+        self,
+        inner_cmd: Sequence[str],
+        env: dict[str, str],
+        *,
+        extra_singularity_binds: Sequence[str] | None = None,
+        extra_docker_volumes: Sequence[str] | None = None,
     ) -> int:
         runtime = self.config.runtime.lower()
         if runtime == "local":
@@ -344,6 +391,7 @@ class ContainerRunner:
                 *self._docker_user_args(),
                 *self._docker_gpu_args(),
                 *self._docker_volume_args(),
+                *(extra_docker_volumes or ()),
                 "-w",
                 ar,
             ]
@@ -365,6 +413,8 @@ class ContainerRunner:
             if self.config.singularity_rocm:
                 cmd.append("--rocm")
             for bind in self._singularity_binds():
+                cmd.extend(["--bind", bind])
+            for bind in extra_singularity_binds or ():
                 cmd.extend(["--bind", bind])
             for k, v in env.items():
                 cmd.extend(["--env", f"{k}={v}"])

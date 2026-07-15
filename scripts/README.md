@@ -16,7 +16,7 @@ This directory has **two variants** of the long-sequence split / fold / stitch p
 
 The host scripts use **`split_fold_stitch/container.py`** to wire fold and PyMOL containers. The single-container scripts duplicate tiling and stitch logic so they stand alone and do **not** import that orchestration layer.
 
-**AlphaFold2 only:** the host script accepts **FASTA** input; the single-container script also accepts **A2M / A3M** (ColabFold MSAs). See **`alphafold2/scripts/README.md`**.
+**AlphaFold2 only:** the host script accepts **FASTA** or **A2M / A3M** (ColabFold MSAs; optional **`--colabfold-a3m`** with FASTA). A3M inputs are sliced per chunk and converted to **`msas/*.sto`** inside the AF2 container before folding. See **`alphafold2/scripts/README.md`**.
 
 ## Prerequisites
 
@@ -86,7 +86,7 @@ python3 /path/to/GPU_biology/scripts/split_and_fold_segments_colabfold.py QUERY.
   -- --<any colabfold_batch flags>
 ```
 
-### AlphaFold2 + PyMOL (FASTA; same script, full or minimal DB)
+### AlphaFold2 + PyMOL (FASTA or A3M; same script, full or minimal DB)
 
 Flags after `--` must match your site: **`full_dbs`** + complete paths (customer), or **`reduced_dbs`** + a small `databases` tree + real **pdb70** (internal). Bootstrap a minimal tree with **`alphafold2/scripts/create_dummy_reduced_databases.sh`**, then download pdb70 into `…/pdb70/pdb70/`. See root **`README.md`**.
 
@@ -98,7 +98,8 @@ python3 /path/to/GPU_biology/scripts/split_and_fold_segments_alphafold2.py QUERY
   <…remaining flags required by your AlphaFold2 image…>
 ```
 
-- **`--work-dir`**: common parent of input FASTA, chunk FASTAs, and `--af2-output-base` (default `<work-dir>/af2_predictions`).
+- **`--work-dir`**: common parent of input FASTA/A3M, chunk files, and `--af2-output-base` (default `<work-dir>/af2_predictions`).
+- **`--colabfold-a3m`**: with FASTA input, column-slice a full-query ColabFold `.a3m` per chunk (same as A3M primary input).
 - **`--`**: everything after is forwarded to **`run_alphafold.py`** unchanged.
 
 Environment overrides for the docker helper scripts: see `alphafold2_docker_run.sh` / `colabfold_docker_run.sh` headers (`ALPHAFOLD2_ROCM_VERSION`, `COLABFOLD_ROCM_VERSION`, `ALPHAFOLD2_IMAGE`, `COLABFOLD_IMAGE`, `ALPHAFOLD2_SCRIPTS_DIR`, `ALPHAFOLD2_MOUNT_SCRIPTS`, `MYSCRATCH`, etc.).
@@ -116,7 +117,7 @@ python3 /path/to/GPU_biology/scripts/split_and_fold_segments_colabfold_single_co
   --max-chunk-aa 400 -- --num-recycle 3
 ```
 
-On **ROCm 7.2.3**, that script alone adds JAX/XLA settings (including `--xla_gpu_enable_triton_gemm=false`) when the environment looks like 7.2.3 (e.g. `ROCM_PATH` contains `/rocm-7.2.3`). Set `GPU_BIOLOGY_FORCE_ROCM_732_JAX=1` or `0` to force that workaround on or off. Dual-container orchestration and the AlphaFold2 single-container script use only minimal `XLA_FLAGS` (`--xla_gpu_autotune_level=0`).
+On **ROCm 7.2.3**, ColabFold single-container and dual-container orchestration add JAX/XLA settings (including `--xla_gpu_enable_triton_gemm=false`) when the fold image path or environment looks like 7.2.3 (e.g. `rocm7.2.3` in the `.sif` name or `ROCM_PATH` contains `/rocm-7.2.3`). Set `GPU_BIOLOGY_FORCE_ROCM_732_JAX=1` or `0` to force that workaround on or off. The AlphaFold2 single-container script still uses only minimal `XLA_FLAGS` unless you set that override.
 
 ### AlphaFold2 + PyMOL (one image)
 
