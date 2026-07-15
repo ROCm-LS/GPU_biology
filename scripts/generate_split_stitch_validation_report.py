@@ -35,6 +35,7 @@ from stitch_compare_core import (
     TARGET_CASES,
     CandidateWorkDir,
     ComparisonMetrics,
+    RunTiling,
     TargetCase,
     compare_structures,
     find_stitched_candidates,
@@ -47,6 +48,8 @@ from stitch_compare_core import (
     parse_candidate_dirs,
     resolve_af2_reference,
     resolve_colabfold_reference,
+    resolve_run_tiling,
+    infer_plan_hint,
 )
 
 
@@ -56,8 +59,8 @@ def _fmt(x: float | None, nd: int = 2) -> str:
     return f'{x:.{nd}f}'
 
 
-def _candidate_run_log(work_dir: str, case_name: str, label: str) -> str | None:
-    if label == 'colabfold':
+def _candidate_run_log(work_dir: str, case_name: str, candidate: CandidateWorkDir) -> str | None:
+    if candidate.backend == 'colabfold':
         path = os.path.join(work_dir, f'{case_name}.colabfold.rocm7.2.3.log')
         return path if os.path.isfile(path) else None
     return None
@@ -75,6 +78,7 @@ def _collect_case_result(
     stitch_diff: float | None,
     seg_scores_txt: str | None,
     stitch_suffix: str,
+    run_tiling: RunTiling,
 ) -> dict:
     return {
         'case': case,
@@ -88,11 +92,12 @@ def _collect_case_result(
         'metrics': metrics,
         'stitch_diff': stitch_diff,
         'seg_scores_txt': seg_scores_txt,
+        'run_tiling': run_tiling,
     }
 
 
 def _segment_scores_text(case: TargetCase, candidate: CandidateWorkDir) -> str | None:
-    if candidate.label == 'colabfold':
+    if candidate.backend == 'colabfold':
         scores = parse_segment_rank_metrics(candidate.path, case.name)
         if not scores:
             return None
@@ -127,9 +132,12 @@ def _gather_results(
             )
             if not stitched:
                 continue
-            run_log = _candidate_run_log(cand.path, case.name, cand.label)
+            run_log = _candidate_run_log(cand.path, case.name, cand)
             stitch_diff = parse_stitch_policy_diff(run_log) if run_log else None
             seg_scores_txt = _segment_scores_text(case, cand)
+            run_tiling = resolve_run_tiling(
+                cand.path, case, plan_hint=infer_plan_hint(cand.label)
+            )
 
             for stitch_suffix, cand_path in stitched:
                 for ref_backend, ref_root in ref_backends:
@@ -152,7 +160,7 @@ def _gather_results(
                         ref_path=ref_path,
                         cand_path=cand_path,
                         length=case.length,
-                        overlap_windows=case.overlap_windows,
+                        overlap_windows=run_tiling.overlap_windows,
                         ref_chain=case.ref_chain if ref_backend == 'colabfold' else None,
                     )
                     rows.append(
@@ -167,6 +175,7 @@ def _gather_results(
                             metrics=metrics,
                             stitch_diff=stitch_diff,
                             seg_scores_txt=seg_scores_txt,
+                            run_tiling=run_tiling,
                         )
                     )
     if not rows:
@@ -199,6 +208,7 @@ def _summary_table(rows: list[dict]) -> list[str]:
 def _detail_section(row: dict) -> list[str]:
     case = row['case']
     m = row['metrics']
+    tiling: RunTiling = row['run_tiling']
     lines = [
         (
             f'### {case.name} — {row["candidate_label"]}/{row["stitch_suffix"]} stitched vs '
@@ -206,11 +216,17 @@ def _detail_section(row: dict) -> list[str]:
         ),
         '',
         f'- **Input:** `{case.input_file}`',
-        f'- **Tiling:** {case.segments}',
-        f'- **Overlap:** {case.overlap_desc}',
-        f'- **Candidate:** `{m.cand_path}`',
-        f'- **Reference:** `{row["ref_path"]}`',
+        f'- **Tiling:** {tiling.segments}',
+        f'- **Overlap:** {tiling.overlap_desc}',
     ]
+    if tiling.source != 'default':
+        lines.append(f'- **Tiling source:** `{tiling.source}` (from `{row["candidate_dir"]}`)')
+    lines.extend(
+        [
+            f'- **Candidate:** `{m.cand_path}`',
+            f'- **Reference:** `{row["ref_path"]}`',
+        ]
+    )
     if case.ref_note and row['ref_backend'] == 'colabfold':
         lines.append(f'- **Note:** {case.ref_note}')
     if row['ref_rank_plddt'] is not None:
@@ -302,8 +318,17 @@ def _interpretation(rows: list[dict]) -> list[str]:
             f'{100 * m.global_pair_frac:.0f}% pairing; stitched pLDDT '
             f'{m.cand_plddt:.1f} vs reference {m.ref_plddt:.1f}.'
         )
-    af2_3013 = _find('3013aa', 'alphafold2', 'alphafold2')
-    if af2_3013:
+    af2_3013_default = _find('3013aa', 'alphafold2-default', 'alphafold2')
+    af2_3013_balanced = _find('3013aa', 'alphafold2-balanced', 'alphafold2')
+    af2_3013 = af2_3013_default or _find('3013aa', 'alphafold2', 'alphafold2')
+    if af2_3013_default and af2_3013_balanced:
+        m_def = af2_3013_default['metrics']
+        m_bal = af2_3013_balanced['metrics']
+        bullets.append(
+            f'- **3013aa AF2 default vs balanced (same reference):** default RMSD '
+            f'{m_def.global_rmsd:.1f} Å; balanced RMSD {m_bal.global_rmsd:.1f} Å.'
+        )
+    elif af2_3013:
         m = af2_3013['metrics']
         bullets.append(
             f'- **3013aa AF2 split-stitch (MI250X) vs AF2 full-length:** RMSD '
@@ -460,7 +485,11 @@ def main(argv: list[str] | None = None) -> int:
         action='append',
         default=[],
         metavar='LABEL:PATH',
-        help='Stitched candidate tree; repeat for colabfold and/or alphafold2.',
+        help=(
+            'Stitched candidate tree; repeat for multiple runs. LABEL is shown in the '
+            "report (e.g. alphafold2-default, alphafold2-balanced). Backend is inferred "
+            "from the label prefix ('colabfold' or 'alphafold2')."
+        ),
     )
     p.add_argument(
         '--stitch-suffix',

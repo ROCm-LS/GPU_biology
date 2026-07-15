@@ -15,6 +15,12 @@ ReferenceBackend = Literal['colabfold', 'alphafold2']
 CandidateBackend = Literal['colabfold', 'alphafold2']
 
 
+_PART_STEM_RE = re.compile(
+    r'^(.+)_part_(\d+)_(\d+)-(\d+)\.(?:fasta|fa|a3m|FASTA|FA|A3M)$',
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True)
 class TargetCase:
     name: str
@@ -28,6 +34,18 @@ class TargetCase:
     colabfold_ref_glob: str | None = None
     colabfold_ref_log: str | None = None
     af2_subdir: str | None = None
+
+
+@dataclass(frozen=True)
+class RunTiling:
+    """Segment plan discovered from a split-fold work directory."""
+
+    segments: str
+    overlap_desc: str
+    overlap_windows: tuple[tuple[int, int], ...]
+    chunks_1based: tuple[tuple[int, int], ...] = ()
+    plan_mode: str | None = None
+    source: str = 'default'  # part_files | plan_json | default
 
 
 TARGET_CASES: tuple[TargetCase, ...] = (
@@ -101,9 +119,23 @@ class ComparisonMetrics:
 
 @dataclass
 class CandidateWorkDir:
-    label: CandidateBackend
+    label: str
     path: str
+    backend: ReferenceBackend
     stitch_variants: str = 'both'  # plddt | rmsd | both
+
+
+def infer_candidate_backend(label: str) -> ReferenceBackend:
+    """Map a display label to ColabFold vs AlphaFold2 segment-score parsing."""
+    low = label.strip().lower()
+    if low == 'colabfold' or low.startswith('colabfold'):
+        return 'colabfold'
+    if low == 'alphafold2' or low.startswith('alphafold2') or low.startswith('af2'):
+        return 'alphafold2'
+    raise SystemExit(
+        f'Cannot infer fold backend from candidate label {label!r}; '
+        "use a label starting with 'colabfold' or 'alphafold2' (e.g. alphafold2-default)."
+    )
 
 
 def case_by_name(name: str) -> TargetCase:
@@ -112,6 +144,250 @@ def case_by_name(name: str) -> TargetCase:
             return case
     known = ', '.join(c.name for c in TARGET_CASES)
     raise SystemExit(f'Unknown target {name!r}; expected one of: {known}')
+
+
+def _chunks_half_open_from_1based(
+    ranges_1based: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Convert inclusive 1-based ``(start, end)`` pairs to half-open 0-based chunks."""
+    return [(start - 1, end) for start, end in ranges_1based]
+
+
+def overlap_windows_from_chunks(
+    chunks: list[tuple[int, int]],
+) -> tuple[tuple[int, int], ...]:
+    """Adjacent overlap windows (1-based inclusive) from half-open chunk indices."""
+    windows: list[tuple[int, int]] = []
+    for i in range(1, len(chunks)):
+        _s_prev, e_prev = chunks[i - 1]
+        s_i, _e_i = chunks[i]
+        if s_i < e_prev:
+            windows.append((s_i + 1, e_prev))
+    return tuple(windows)
+
+
+def _format_segments_label(chunks_0: list[tuple[int, int]]) -> str:
+    parts = [f'{s + 1}–{e}' for s, e in chunks_0]
+    return f'{len(chunks_0)} segments: ' + ', '.join(parts)
+
+
+def junction_label(lo: int, hi: int) -> str:
+    return f'{lo}–{hi}'
+
+
+def _format_overlap_desc(windows: tuple[tuple[int, int], ...]) -> str:
+    if not windows:
+        return 'n/a (single segment or abutting chunks)'
+    spans = [hi - lo + 1 for lo, hi in windows]
+    labels = ', '.join(f'resi {junction_label(lo, hi)}' for lo, hi in windows)
+    if len(set(spans)) == 1:
+        return f'{spans[0]} aa per junction ({labels})'
+    detail = ', '.join(
+        f'resi {junction_label(lo, hi)} ({hi - lo + 1} aa)' for lo, hi in windows
+    )
+    return f'junction overlaps: {detail}'
+
+
+def _collect_part_range_options(
+    work_dir: str,
+    case_name: str,
+) -> dict[int, set[tuple[int, int]]]:
+    """Map part index to all ``(start, end)`` ranges seen in on-disk segment inputs."""
+    options: dict[int, set[tuple[int, int]]] = {}
+    pattern = os.path.join(work_dir, f'{case_name}_part_*')
+    for path in sorted(glob.glob(pattern)):
+        match = _PART_STEM_RE.match(os.path.basename(path))
+        if not match or match.group(1) != case_name:
+            continue
+        part_index = int(match.group(2))
+        start_1 = int(match.group(3))
+        end_1 = int(match.group(4))
+        options.setdefault(part_index, set()).add((start_1, end_1))
+    return options
+
+
+def _is_coherent_tiling(ranges_1based: list[tuple[int, int]], *, length: int) -> bool:
+    if not ranges_1based or ranges_1based[0][0] != 1 or ranges_1based[-1][1] != length:
+        return False
+    for i in range(1, len(ranges_1based)):
+        prev_s, prev_e = ranges_1based[i - 1]
+        cur_s, _cur_e = ranges_1based[i]
+        if cur_s <= prev_s or cur_s >= prev_e:
+            return False
+    return True
+
+
+def enumerate_coherent_tilings(
+    options: dict[int, set[tuple[int, int]]],
+    *,
+    length: int,
+) -> list[list[tuple[int, int]]]:
+    """All valid 1-based inclusive tilings implied by on-disk part filename options."""
+    if not options:
+        return []
+
+    results: list[list[tuple[int, int]]] = []
+    seen: set[tuple[tuple[int, int], ...]] = set()
+    max_idx = max(options)
+
+    def search(part_idx: int, current: list[tuple[int, int]]) -> None:
+        if current and current[-1][1] == length:
+            if _is_coherent_tiling(current, length=length):
+                key = tuple(current)
+                if key not in seen:
+                    seen.add(key)
+                    results.append(current[:])
+            return
+        if part_idx > max_idx:
+            return
+        if part_idx not in options:
+            search(part_idx + 1, current)
+            return
+        for rng in sorted(options[part_idx]):
+            if current:
+                prev_s, prev_e = current[-1]
+                if rng[0] <= prev_s or rng[0] >= prev_e:
+                    continue
+            search(part_idx + 1, current + [rng])
+
+    search(0, [])
+    return results
+
+
+def discover_chunks_from_part_files(
+    work_dir: str,
+    case_name: str,
+    *,
+    length: int | None = None,
+    plan_hint: str | None = None,
+) -> list[tuple[int, int]] | None:
+    """Read 0-based half-open chunks from ``{case}_part_{i}_{a}-{b}.*`` inputs."""
+    options = _collect_part_range_options(work_dir, case_name)
+    if not options:
+        return None
+
+    if length is None:
+        case = case_by_name(case_name)
+        length = case.length
+
+    tilings = enumerate_coherent_tilings(options, length=length)
+    if not tilings:
+        return None
+    if len(tilings) == 1:
+        return _chunks_half_open_from_1based(tilings[0])
+
+    if plan_hint == 'default':
+        chosen = min(tilings, key=len)
+    elif plan_hint == 'balanced':
+        chosen = max(tilings, key=len)
+    else:
+        chosen = tilings[0]
+    return _chunks_half_open_from_1based(chosen)
+
+
+def infer_plan_hint(label: str) -> str | None:
+    """Infer split-fold plan mode from a candidate display label."""
+    low = label.strip().lower()
+    if 'balanced' in low:
+        return 'balanced'
+    if 'default' in low:
+        return 'default'
+    return None
+
+
+def _plan_matches_case(data: dict, case_name: str) -> bool:
+    raw = data.get('base')
+    if raw is None:
+        return False
+    stem = os.path.splitext(os.path.basename(str(raw)))[0]
+    return stem == case_name
+
+
+def load_plan_json_chunks(
+    work_dir: str,
+    case_name: str,
+) -> tuple[list[tuple[int, int]], str | None] | None:
+    """Load 0-based chunks from ``.split_fold_stitch/{case}_*.json`` plan files."""
+    plan_dir = os.path.join(work_dir, '.split_fold_stitch')
+    candidates = (
+        f'{case_name}_stitch_plddt.json',
+        f'{case_name}_stitch_rmsd.json',
+        f'{case_name}_summary.json',
+        # Legacy single-target filenames (last run only).
+        'stitch_plddt.json',
+        'stitch_rmsd.json',
+        'summary.json',
+    )
+    for fname in candidates:
+        path = os.path.join(plan_dir, fname)
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding='utf-8') as fh:
+            data = json.load(fh)
+        if not _plan_matches_case(data, case_name):
+            continue
+        chunks = [tuple(pair) for pair in data['chunks']]
+        if not chunks:
+            continue
+        return chunks, data.get('plan_mode')
+    return None
+
+
+def resolve_run_tiling(
+    work_dir: str,
+    case: TargetCase,
+    *,
+    plan_hint: str | None = None,
+) -> RunTiling:
+    """
+    Discover tiling for a candidate work tree.
+
+    Prefers on-disk part filenames, then a matching stitch plan JSON, then the
+    static ``TargetCase`` defaults. When duplicate part indices disagree,
+    ``plan_hint`` (``default`` / ``balanced``, often from the candidate label)
+    selects the intended tiling.
+    """
+    work_dir = os.path.abspath(work_dir)
+    chunks = discover_chunks_from_part_files(
+        work_dir, case.name, length=case.length, plan_hint=plan_hint
+    )
+    plan_mode: str | None = None
+    source = 'default'
+
+    if chunks:
+        source = 'part_files'
+        plan = load_plan_json_chunks(work_dir, case.name)
+        if plan is not None:
+            plan_mode = plan[1]
+    else:
+        plan = load_plan_json_chunks(work_dir, case.name)
+        if plan is not None:
+            chunks, plan_mode = plan
+            source = 'plan_json'
+
+    if not chunks:
+        return RunTiling(
+            segments=case.segments,
+            overlap_desc=case.overlap_desc,
+            overlap_windows=case.overlap_windows,
+            source='default',
+        )
+
+    windows = overlap_windows_from_chunks(chunks)
+    chunks_1based = tuple((s + 1, e) for s, e in chunks)
+    segments = _format_segments_label(chunks)
+    overlap_desc = _format_overlap_desc(windows)
+    if plan_mode and plan_mode != 'default':
+        segments = f'{segments} (plan={plan_mode})'
+
+    return RunTiling(
+        segments=segments,
+        overlap_desc=overlap_desc,
+        overlap_windows=windows,
+        chunks_1based=chunks_1based,
+        plan_mode=plan_mode,
+        source=source,
+    )
 
 
 def _resolve_one(root: str, pattern: str) -> str:
@@ -337,10 +613,6 @@ def parse_af2_segment_rank_plddt(work_dir: str, name: str) -> list[float]:
     return scores
 
 
-def junction_label(lo: int, hi: int) -> str:
-    return f'{lo}–{hi}'
-
-
 def parse_candidate_dirs(
     specs: list[str],
     *,
@@ -353,13 +625,15 @@ def parse_candidate_dirs(
                 f'Invalid --candidate-dir {spec!r}; use LABEL:PATH (e.g. colabfold:/work/run)'
             )
         label, path = spec.split(':', 1)
-        label = label.strip().lower()
+        label = label.strip()
         path = os.path.abspath(path.strip())
-        if label not in ('colabfold', 'alphafold2'):
-            raise SystemExit(
-                f'Unknown candidate label {label!r}; expected colabfold or alphafold2'
-            )
+        backend = infer_candidate_backend(label)
         out.append(
-            CandidateWorkDir(label=label, path=path, stitch_variants=stitch_variants)
+            CandidateWorkDir(
+                label=label,
+                path=path,
+                backend=backend,
+                stitch_variants=stitch_variants,
+            )
         )
     return out

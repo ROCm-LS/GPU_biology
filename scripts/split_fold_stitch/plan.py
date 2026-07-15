@@ -4,6 +4,29 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Literal
+
+PlanKind = Literal["validate", "stitch", "summary"]
+
+
+def plan_json_basename(base: str, kind: PlanKind, mode: str | None = None) -> str:
+    """Filename for one plan under ``.split_fold_stitch`` (e.g. ``3013aa_stitch_plddt.json``)."""
+    if kind == "summary":
+        return f"{base}_summary.json"
+    if kind in ("validate", "stitch"):
+        if mode not in ("plddt", "rmsd"):
+            raise ValueError(f"mode required for kind={kind!r}, got {mode!r}")
+        return f"{base}_{kind}_{mode}.json"
+    raise ValueError(f"Unknown plan kind {kind!r}")
+
+
+def plan_json_path(
+    plan_dir: str,
+    base: str,
+    kind: PlanKind,
+    mode: str | None = None,
+) -> str:
+    return os.path.join(plan_dir, plan_json_basename(base, kind, mode))
 
 
 def build_plan_json(

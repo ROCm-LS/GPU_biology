@@ -131,3 +131,21 @@ python3 /gpu_biology/scripts/split_and_fold_segments_alphafold2_single_container
 (``alphafold2/scripts`` is also available at ``/work/af2_scripts``).
 
 **A3M / A2M input** (e.g. MSAs from ColabFold): same script; it converts each chunk’s alignment via **`alphafold2/scripts/convert_colabfold_a3m_to_sto.py`** and runs with **`--use_precomputed_msas=true`** by default. See **`alphafold2/scripts/README.md`**.
+
+## Validation and reporting
+
+After split-fold-stitch runs complete under a `--work-dir`, compare stitched models to
+full-length references and write markdown reports.
+
+**→ [VALIDATION.md](VALIDATION.md)** — work-directory layout, rsync from Setonix, reference
+paths, `generate_split_stitch_validation_report.py`, and single-target checks.
+
+Quick example (AlphaFold2 candidates vs AF2 references):
+
+```bash
+python3 scripts/generate_split_stitch_validation_report.py \
+  --no-colabfold-ref \
+  --af2-output-root /path/to/af2_output \
+  --candidate-dir alphafold2:/path/to/alphafold2_work_rocm7.2.3 \
+  --output reports/alphafold2_split_stitch_validation_report.md
+```

@@ -3,7 +3,7 @@
 Copy-paste outline to **reproduce** long-sequence split–fold–stitch on Setonix.
 Singularity module used for verified runs: **`singularity/3.11.4-nompi`**.
 
-Full docs: [README.md](README.md), [scripts/README.md](scripts/README.md).
+Full docs: [README.md](README.md), [scripts/README.md](scripts/README.md), [scripts/VALIDATION.md](scripts/VALIDATION.md) (experiments → reports).
 
 ---
 
@@ -217,17 +217,35 @@ python3.11 scripts/split_and_fold_segments_alphafold2.py \
 
 ### 4.5 Other sequences / variants
 
-**`[FILL IN]`** — e.g. 5005 aa, re-stitch only, validate adjacent segments:
+Run additional targets in the **same** `--work-dir` to build a multi-target tree for validation
+(see [scripts/VALIDATION.md](scripts/VALIDATION.md)):
 
 ```bash
-# Re-stitch only (fold already done):
-#   add --skip-colabfold  or  --skip-alphafold
+# 5005 aa (same work-dir as 3013aa)
+python3.11 scripts/split_and_fold_segments_alphafold2.py \
+  examples/inputs/5005aa.fasta \
+  --runtime singularity \
+  --alphafold2-sif ${MYSCRATCH}/containers/alphafold2_rocm7.2.3_nopymol.sif \
+  --pymol-sif ${MYSCRATCH}/containers/pymol.sif \
+  --data-dir /scratch/references/alphafold_feb2024/databases \
+  --work-dir alphafold2_work_rocm7.2.3 \
+  --no-use-precomputed-msas \
+  2>&1 | tee alphafold2_work_rocm7.2.3/5005aa.alphafold2.rocm7.2.3.log
 
-# Other FASTA:
-#   examples/inputs/5005aa.fasta
-
-# [FILL IN] any sbatch wrapper or project-specific env vars
+# 1IH7.7 (A3M input)
+python3.11 scripts/split_and_fold_segments_alphafold2.py \
+  examples/inputs/1IH7.7.a3m \
+  --runtime singularity \
+  --alphafold2-sif ${MYSCRATCH}/containers/alphafold2_rocm7.2.3_nopymol.sif \
+  --pymol-sif ${MYSCRATCH}/containers/pymol.sif \
+  --data-dir /scratch/references/alphafold_feb2024/databases \
+  --work-dir alphafold2_work_rocm7.2.3 \
+  2>&1 | tee alphafold2_work_rocm7.2.3/1IH7.7.alphafold2.rocm7.2.3.log
 ```
+
+Re-stitch only (fold already done): add `--skip-alphafold` (or `--skip-colabfold`).
+
+Balanced tiling for 3013 aa: use a **separate** `--work-dir` and `--plan-mode balanced`.
 
 ---
 
@@ -240,11 +258,29 @@ Under each `--work-dir`:
 | Chunk FASTAs | `3013aa_part_0_1-3000.fa`, `3013aa_part_1_2001-3013.fa` | same |
 | Per-chunk PDB | `3013aa_part_*_output/*_rank_001*.pdb` | `af2_predictions/3013aa_part_*/ranked_0.pdb` |
 | Stitched | `3013aa_stitched_plddt.pdb`, `3013aa_stitched_rmsd.pdb` | same |
-| Plans | `.split_fold_stitch/stitch_*.json` | same |
+| Plans | `.split_fold_stitch/3013aa_stitch_plddt.json`, etc. (one file per target) | same |
 
 ---
 
-## 6. Quick checks
+## 6. Validation reports (local)
+
+After runs finish, transfer stitched PDBs and part files from `--work-dir` (not large
+`.pkl` files), then generate a markdown report on a machine with PyMOL installed.
+
+**Full guide:** [scripts/VALIDATION.md](scripts/VALIDATION.md)
+
+```bash
+# On local machine (example paths)
+python3 scripts/generate_split_stitch_validation_report.py \
+  --no-colabfold-ref \
+  --af2-output-root /home/sajandhy/af2_output \
+  --candidate-dir alphafold2:/path/to/alphafold2_work_rocm7.2.3 \
+  --output reports/alphafold2_split_stitch_validation_report.md
+```
+
+---
+
+## 7. Quick checks
 
 ```bash
 # [FILL IN] GPU visible on compute node
@@ -261,7 +297,7 @@ ls -lh ${WORK_DIR}/3013aa_stitched_*.pdb
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|

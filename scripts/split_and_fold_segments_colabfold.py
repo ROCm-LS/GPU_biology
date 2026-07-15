@@ -50,7 +50,7 @@ from split_fold_stitch.container import (
     container_config_from_args,
     resolve_work_dir,
 )
-from split_fold_stitch.plan import build_plan_json, relativize_plan_paths, write_plan_json
+from split_fold_stitch.plan import build_plan_json, plan_json_path, relativize_plan_paths, write_plan_json
 from split_fold_stitch.tiling import (
     colabfold_msa_input_fail_hint,
     prepare_chunk_inputs,
@@ -221,7 +221,7 @@ def _run_pymol_stage(
             print(
                 f"\n### Pre-stitch validation (anchor: primary {mo}, secondary {other}) ###\n"
             )
-            plan_path = os.path.join(plan_dir, f"validate_{mo}.json")
+            plan_path = plan_json_path(plan_dir, base, "validate", mo)
             write_plan_json(
                 plan_path,
                 relativize_plan_paths(
@@ -243,7 +243,7 @@ def _run_pymol_stage(
     for mo in stitch_modes:
         out_pdb = f"{base}_stitched_{mo}.pdb"
         print(f"\n### Stitch: anchor policy {mo} -> {out_pdb} ###\n")
-        plan_path = os.path.join(plan_dir, f"stitch_{mo}.json")
+        plan_path = plan_json_path(plan_dir, base, "stitch", mo)
         write_plan_json(
             plan_path,
             relativize_plan_paths(
@@ -263,7 +263,7 @@ def _run_pymol_stage(
         if rc != 0:
             raise SystemExit(f"PyMOL stitch failed (exit {rc}) for mode {mo!r}.")
 
-    summary_plan = os.path.join(plan_dir, "summary.json")
+    summary_plan = plan_json_path(plan_dir, base, "summary")
     write_plan_json(
         summary_plan,
         relativize_plan_paths(

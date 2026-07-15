@@ -84,6 +84,7 @@ from stitch_compare_core import (
     find_stitched_candidates,
     junction_label,
     resolve_reference,
+    resolve_run_tiling,
 )
 
 
@@ -217,11 +218,17 @@ def main(argv: list[str] | None = None) -> int:
     if case and ref_chain is None:
         ref_chain = case.ref_chain
 
+    run_tiling = None
+    if case and args.candidate_dir:
+        run_tiling = resolve_run_tiling(os.path.abspath(args.candidate_dir), case)
+
     if args.reference:
         ref_path = _expand_path(args.reference)
         ref_chain = ref_chain  # may stay None
         if case:
-            overlap_windows = case.overlap_windows
+            overlap_windows = (
+                run_tiling.overlap_windows if run_tiling else case.overlap_windows
+            )
             length = case.length
         else:
             overlap_windows = ()
@@ -250,7 +257,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (FileNotFoundError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
-        overlap_windows = case.overlap_windows
+        overlap_windows = (
+            run_tiling.overlap_windows if run_tiling else case.overlap_windows
+        )
         length = case.length
 
     if args.no_overlap_report:
@@ -275,6 +284,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(f'Reference: {ref_path}')
+    if run_tiling is not None:
+        print(f'Tiling ({run_tiling.source}): {run_tiling.segments}')
+        print(f'Overlap windows: {run_tiling.overlap_desc}')
     for cand in candidates:
         cand_path = _expand_path(cand)
         metrics = compare_structures(
