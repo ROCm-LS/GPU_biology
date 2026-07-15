@@ -8,7 +8,7 @@ import os
 # contracting dimension"; disable that path (match Dockerfiles under */rocm7.2.3/).
 _ROCM_732_MARKERS = ("rocm7.2.3", "rocm-7.2.3", "rocm_7.2.3", "/rocm-7.2.3")
 
-# Minimal settings: ROCm 6.2.4 ColabFold, dual-container AlphaFold2 (6.2.4 and 7.2.3).
+# Minimal settings: ROCm 6.2.4 ColabFold and dual-container AlphaFold2 on 6.2.4.
 MINIMAL_ROCM_JAX_ENV: dict[str, str] = {
     "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
     "XLA_FLAGS": "--xla_gpu_autotune_level=0",
@@ -66,9 +66,13 @@ def colabfold_batch_jax_env(*, image_hints: str = "") -> dict[str, str]:
 def alphafold_fold_jax_env(*, image_hints: str = "") -> dict[str, str]:
     """JAX/XLA env for ``run_alphafold.py`` in dual-container orchestration.
 
-    Uses minimal settings on both ROCm 6.2.4 and 7.2.3 (see ``scripts/README.md``).
+    - **ROCm 6.2.4** (``.sif`` / image path contains ``rocm6.2.4``): minimal env.
+    - **ROCm 7.2.3** (``rocm7.2.3`` in ``--alphafold2-sif`` path or
+      ``GPU_BIOLOGY_FORCE_ROCM_732_JAX=1``): platform allocator +
+      ``--xla_gpu_enable_triton_gemm=false`` (same as ColabFold).
     """
-    del image_hints  # reserved for future per-version tuning
+    if _use_colabfold_732_jax_env(image_hints):
+        return dict(COLABFOLD_ROCM_732_JAX_ENV)
     return minimal_rocm_jax_env()
 
 
