@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Literal
 
 # Tiling: max ~3000 aa per ColabFold run, 1000 aa overlap so consecutive windows share
 # the same stretch (1-based: 1–3000 and 2001–5005 for 5005 aa, overlap 2001–3000).
@@ -12,6 +13,14 @@ MAX_CHUNK_AA = 3012
 MIN_OVERLAP = OVERLAP
 JUNCTION_ALIGN_W = 200
 ANCHOR_SLIDE = 50
+
+# Balanced plan: limit how much of the stitched model comes from a single segment.
+BALANCED_D_MAX = 0.40
+BALANCED_MIN_NEW = 500
+BALANCED_STEP_MIN = 800
+
+PlanMode = Literal["default", "balanced"]
+PLAN_MODES: tuple[str, ...] = ("default", "balanced")
 
 
 def _tiling_window_overlap(max_chunk_aa: int) -> tuple[int, int]:
@@ -186,12 +195,64 @@ def write_a3m_match_slice(
             f.write(f"{hline}\n{sub}\n")
 
 
-def get_chunks(total_len: int, *, max_chunk_aa: int = MAX_CHUNK_AA) -> list[tuple[int, int]]:
-    """Overlapping windows covering [0, total_len)."""
+def stitch_contributions(chunks: list[tuple[int, int]]) -> list[int]:
+    """
+    Residues each segment contributes under the current stitch merge policy:
+    segment 0 keeps its full window; later segments append only past the previous end.
+    """
+    if not chunks:
+        return []
+    contribs: list[int] = []
+    prev_end = 0
+    for i, (_s, e) in enumerate(chunks):
+        if i == 0:
+            contribs.append(e)
+        else:
+            contribs.append(e - prev_end)
+        prev_end = e
+    return contribs
+
+
+def stitch_dominance(chunks: list[tuple[int, int]]) -> float:
+    """Largest single-segment fraction of the stitched model (0..1)."""
+    if not chunks:
+        return 0.0
+    total_len = chunks[-1][1]
+    if total_len <= 0:
+        return 0.0
+    return max(stitch_contributions(chunks)) / total_len
+
+
+def is_near_cutoff(
+    total_len: int,
+    *,
+    w_max: int = WINDOW_SIZE,
+    min_new: int = BALANCED_MIN_NEW,
+) -> bool:
+    """True when length is only slightly above the OOM window (e.g. 3013 vs 3000)."""
+    return w_max < total_len <= w_max + min_new
+
+
+def _sliding_chunks(
+    total_len: int,
+    w: int,
+    o: int,
+    *,
+    max_chunk_aa: int,
+    segment_cap: int | None = None,
+) -> list[tuple[int, int]]:
+    """
+    Overlapping windows covering [0, total_len) with explicit window and overlap.
+
+    ``segment_cap`` limits how much sequence a single final segment may absorb
+    (defaults to ``max_chunk_aa``). Balanced tiling passes ``segment_cap=w`` so
+    near-cutoff targets split into multiple folds instead of one dominant tail chunk.
+    """
     if total_len <= 0:
         return []
-    w, o = _tiling_window_overlap(max_chunk_aa)
-    if w <= o and total_len > max_chunk_aa:
+    cap = segment_cap if segment_cap is not None else max_chunk_aa
+    cap = min(cap, max_chunk_aa)
+    if w <= o and total_len > cap:
         raise ValueError(
             f"tiling: window {w} must exceed overlap {o}; try a larger --max-chunk-aa"
         )
@@ -199,12 +260,127 @@ def get_chunks(total_len: int, *, max_chunk_aa: int = MAX_CHUNK_AA) -> list[tupl
     start = 0
     while start < total_len:
         remaining = total_len - start
-        if remaining <= max_chunk_aa:
+        if remaining <= cap:
             chunks.append((start, total_len))
             break
         end = start + w
         chunks.append((start, end))
         start = end - o
+    return chunks
+
+
+def _overlap_for_balanced_window(
+    w: int,
+    *,
+    step_min: int = BALANCED_STEP_MIN,
+) -> int:
+    o = min(OVERLAP, w - 1, max(ANCHOR_SLIDE + 1, w // 3))
+    if w - o < step_min and w > step_min + ANCHOR_SLIDE + 1:
+        o = w - step_min
+    o = max(o, ANCHOR_SLIDE + 1)
+    return min(o, w - 1)
+
+
+def _balanced_window(
+    total_len: int,
+    max_chunk_aa: int,
+    *,
+    d_max: float = BALANCED_D_MAX,
+) -> int:
+    w_cap = min(WINDOW_SIZE, max_chunk_aa)
+    w = min(w_cap, int(d_max * total_len))
+    return max(w, ANCHOR_SLIDE * 2 + 1)
+
+
+def _needs_balanced_plan(
+    total_len: int,
+    default_chunks: list[tuple[int, int]],
+    *,
+    d_max: float = BALANCED_D_MAX,
+    min_new: int = BALANCED_MIN_NEW,
+    w_max: int = WINDOW_SIZE,
+) -> bool:
+    if len(default_chunks) <= 1:
+        return False
+    if is_near_cutoff(total_len, w_max=w_max, min_new=min_new):
+        return True
+    if stitch_dominance(default_chunks) > d_max:
+        return True
+    contribs = stitch_contributions(default_chunks)
+    return len(contribs) >= 2 and contribs[-1] < min_new
+
+
+def plan_tiling(
+    total_len: int,
+    *,
+    max_chunk_aa: int = MAX_CHUNK_AA,
+    plan_mode: str = "default",
+    d_max: float = BALANCED_D_MAX,
+    min_new: int = BALANCED_MIN_NEW,
+    step_min: int = BALANCED_STEP_MIN,
+) -> tuple[list[tuple[int, int]], int, int, str]:
+    """
+    Build a segment tiling plan.
+
+    Returns ``(chunks, window_aa, overlap_aa, mode_used)`` where ``mode_used`` is
+    ``"default"`` or ``"balanced"``.
+
+    Balanced mode shrinks the first window when a default plan would let one segment
+    dominate the stitched output (common when ``n`` is just above ``WINDOW_SIZE``).
+    """
+    if plan_mode not in PLAN_MODES:
+        raise ValueError(f"plan_mode must be one of {PLAN_MODES!r}, got {plan_mode!r}")
+
+    if total_len <= 0:
+        return [], 0, 0, plan_mode
+
+    w_def, o_def = _tiling_window_overlap(max_chunk_aa)
+    default_chunks = _sliding_chunks(
+        total_len, w_def, o_def, max_chunk_aa=max_chunk_aa
+    )
+
+    if plan_mode != "balanced" or len(default_chunks) <= 1:
+        return default_chunks, w_def, o_def, "default"
+
+    if not _needs_balanced_plan(
+        total_len, default_chunks, d_max=d_max, min_new=min_new
+    ):
+        return default_chunks, w_def, o_def, "default"
+
+    min_w = ANCHOR_SLIDE * 2 + 1
+    w = _balanced_window(total_len, max_chunk_aa, d_max=d_max)
+    while w >= min_w:
+        o = _overlap_for_balanced_window(w, step_min=step_min)
+        if w <= o:
+            w = max(min_w, w - 50)
+            continue
+        chunks = _sliding_chunks(
+            total_len,
+            w,
+            o,
+            max_chunk_aa=max_chunk_aa,
+            segment_cap=w,
+        )
+        dom = stitch_dominance(chunks)
+        contribs = stitch_contributions(chunks)
+        last_new = contribs[-1] if contribs else 0
+        if dom <= d_max + 1e-9 or last_new >= min_new // 2:
+            return chunks, w, o, "balanced"
+        w = max(min_w, int(w * 0.9))
+
+    return default_chunks, w_def, o_def, "default"
+
+
+def get_chunks(
+    total_len: int,
+    *,
+    max_chunk_aa: int = MAX_CHUNK_AA,
+    plan_mode: str = "default",
+) -> list[tuple[int, int]]:
+    """Overlapping windows covering [0, total_len)."""
+    chunks, _w, _o, _mode = plan_tiling(
+        total_len, max_chunk_aa=max_chunk_aa, plan_mode=plan_mode
+    )
     return chunks
 
 
@@ -253,7 +429,11 @@ def validate_chunk_plan(
             )
 
 
-def print_chunk_plan(chunks: list[tuple[int, int]]) -> None:
+def print_chunk_plan(
+    chunks: list[tuple[int, int]],
+    *,
+    plan_mode: str | None = None,
+) -> None:
     print("Segment plan (1-based residue numbers):")
     for i, (s, e) in enumerate(chunks):
         ovl = ""
@@ -262,12 +442,22 @@ def print_chunk_plan(chunks: list[tuple[int, int]]) -> None:
             if s < ep:
                 ovl = f"  (overlap with previous: {ep - s} aa)"
         print(f"  part {i}: {s + 1}-{e}  ({e - s} aa){ovl}")
+    if len(chunks) > 1:
+        contribs = stitch_contributions(chunks)
+        total_len = chunks[-1][1]
+        dom = max(contribs) / total_len if total_len else 0.0
+        mode_lbl = f", plan={plan_mode}" if plan_mode else ""
+        print(
+            f"  (stitch contributions per segment: {contribs}; "
+            f"max dominance {dom * 100:.1f}%{mode_lbl})"
+        )
 
 
 def prepare_chunk_inputs(
     seq_input: str,
     *,
     max_chunk_aa: int | None = None,
+    plan_mode: str = "default",
 ) -> tuple[
     str,
     str,
@@ -276,12 +466,13 @@ def prepare_chunk_inputs(
     list[str],
     list[str],
     bool,
+    str,
 ]:
     """
     Parse input, build tiling plan, write per-segment files when needed.
 
     Returns:
-        base, header, msa_in, chunks, chunk_files, out_dirs, one_segment
+        base, header, msa_in, chunks, chunk_files, out_dirs, one_segment, plan_mode_used
     """
     ext = chunk_file_extension(seq_input)
     base = os.path.splitext(seq_input)[0]
@@ -302,16 +493,18 @@ def prepare_chunk_inputs(
         raise SystemExit(
             f"max-chunk-aa ({mca}) is too small; use at least ~{ANCHOR_SLIDE * 2} for overlap/anchors."
         )
-    tw, tov = _tiling_window_overlap(mca)
 
-    chunks = get_chunks(total_len, max_chunk_aa=mca)
+    chunks, tw, tov, mode_used = plan_tiling(
+        total_len, max_chunk_aa=mca, plan_mode=plan_mode
+    )
     validate_chunk_plan(
         chunks, total_len, max_chunk_aa=mca, min_adjacent_overlap=tov
     )
-    print_chunk_plan(chunks)
-    if mca != MAX_CHUNK_AA or len(chunks) > 1:
+    print_chunk_plan(chunks, plan_mode=mode_used)
+    if mca != MAX_CHUNK_AA or len(chunks) > 1 or mode_used != "default":
         print(
-            f"  (tiling: max {mca} aa per segment, window {tw} aa, adjacent overlap {tov} aa)"
+            f"  (tiling: max {mca} aa per segment, window {tw} aa, "
+            f"adjacent overlap {tov} aa, plan mode {mode_used})"
         )
     if msa_in and len(chunks) == 1 and max_chunk_aa is None:
         print(
@@ -344,4 +537,4 @@ def prepare_chunk_inputs(
             chunk_files.append(fn)
             out_dirs.append(f"{stem}_output")
 
-    return base, header, msa_in, chunks, chunk_files, out_dirs, one_segment
+    return base, header, msa_in, chunks, chunk_files, out_dirs, one_segment, mode_used

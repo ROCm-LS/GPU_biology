@@ -118,6 +118,7 @@ def _run_pymol_stage(
     stitch_modes: list[str],
     validate_adjacent_segments: bool,
     work_dir: str,
+    plan_mode: str = "default",
 ) -> None:
     plan_dir = os.path.join(work_dir, ".split_fold_stitch")
     os.makedirs(plan_dir, exist_ok=True)
@@ -139,6 +140,7 @@ def _run_pymol_stage(
                         out_dirs=pred_dirs,
                         anchor_primary=mo,
                         fold_backend=fb,
+                        plan_mode=plan_mode,
                     ),
                     work_dir,
                 ),
@@ -161,6 +163,7 @@ def _run_pymol_stage(
                     output_pdb=out_pdb,
                     anchor_primary=mo,
                     fold_backend=fb,
+                    plan_mode=plan_mode,
                 ),
                 work_dir,
             ),
@@ -179,6 +182,7 @@ def _run_pymol_stage(
                 out_dirs=pred_dirs,
                 modes=stitch_modes,
                 fold_backend=fb,
+                plan_mode=plan_mode,
             ),
             work_dir,
         ),
@@ -253,12 +257,15 @@ def main(
     skip_alphafold: bool = False,
     validate_adjacent_segments: bool = False,
     max_chunk_aa: int | None = None,
+    plan_mode: str = "default",
     run_alphafold_extra: list[str] | None = None,
     af2_gpu_slot: int = 0,
 ) -> None:
     seq_input = os.path.abspath(seq_input)
-    base, _header, msa_in, chunks, chunk_files, _cf_out_dirs, one_segment = (
-        prepare_chunk_inputs(seq_input, max_chunk_aa=max_chunk_aa)
+    base, _header, msa_in, chunks, chunk_files, _cf_out_dirs, one_segment, plan_mode_used = (
+        prepare_chunk_inputs(
+            seq_input, max_chunk_aa=max_chunk_aa, plan_mode=plan_mode
+        )
     )
     if msa_in:
         raise SystemExit(
@@ -366,6 +373,15 @@ if __name__ == "__main__":
         help="max residues per segment (default: 3012, same tiling as ColabFold script).",
     )
     p.add_argument(
+        "--plan-mode",
+        choices=("default", "balanced"),
+        default="default",
+        help=(
+            "tiling policy: default uses fixed ~3000 aa windows; balanced shrinks the first "
+            "window when one segment would dominate the stitched model (e.g. 3013 aa)."
+        ),
+    )
+    p.add_argument(
         "--af2-gpu-slot",
         type=int,
         default=0,
@@ -456,6 +472,7 @@ if __name__ == "__main__":
         skip_alphafold=a.skip_alphafold,
         validate_adjacent_segments=a.validate_adjacent_segments,
         max_chunk_aa=a.max_chunk_aa,
+        plan_mode=a.plan_mode,
         run_alphafold_extra=run_alphafold_extra,
         af2_gpu_slot=a.af2_gpu_slot,
     )

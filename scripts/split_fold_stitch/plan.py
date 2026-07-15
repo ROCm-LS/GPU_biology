@@ -15,6 +15,7 @@ def build_plan_json(
     anchor_primary: str = "plddt",
     modes: list[str] | None = None,
     fold_backend: str = "colabfold",
+    plan_mode: str = "default",
 ) -> dict:
     """
     fold_backend: ``colabfold`` (``*_rank_001*.pdb``) or ``alphafold2`` (``ranked_*.pdb``).
@@ -27,6 +28,7 @@ def build_plan_json(
         "anchor_primary": anchor_primary,
         "modes": modes or [],
         "fold_backend": fold_backend,
+        "plan_mode": plan_mode,
     }
 
 
